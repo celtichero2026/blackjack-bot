@@ -78,3 +78,19 @@ def claim_daily(user_id: int, reward: int, today: str):
 
     return True, new_balance
 
+def get_leaderboard(limit: int = 10):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT user_id, balance, wins, losses, games_played
+        FROM players
+        ORDER BY balance DESC
+        LIMIT ?
+    """, (limit,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return rows
+
