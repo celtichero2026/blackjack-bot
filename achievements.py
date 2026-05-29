@@ -1,1 +1,22 @@
-
+ACHIEVEMENTS = {
+    "FIRST_DRINK": {"name": "🍺 First Drink", "description": "Played your first game."},
+    "FIRST_WIN": {"name": "🏆 First Win", "description": "Won your first hand."},
+    "FIRST_LOSS": {"name": "💸 First Loss", "description": "Lost your first hand."},
+    "PUSH_IT": {"name": "🤝 Push It", "description": "Finished a hand with a push."},
+    "BLACKJACK": {"name": "🃏 Blackjack!", "description": "Hit a natural blackjack."},
+    "DOUBLE_TROUBLE": {"name": "💰 Double Trouble", "description": "Used Double Down."},
+    "HOT_STREAK": {"name": "🔥 Hot Streak", "description": "Win 3 games."},
+    "ON_A_HEATER": {"name": "📈 On A Heater", "description": "Win 10 games."},
+    "DOWN_BAD": {"name": "📉 Down Bad", "description": "Lose 10 games."},
+    "BROKE_AGAIN": {"name": "💀 Broke Again", "description": "Reach 0 gold."},
+    "GOLD_HOARDER": {"name": "🏦 Gold Hoarder", "description": "Reach 5,000 gold."},
+    "TAVERN_ROYALTY": {"name": "👑 Tavern Royalty", "description": "Reach 10,000 gold."},
+    "REGULAR": {"name": "🎰 Regular", "description": "Play 25 games."},
+    "VETERAN": {"name": "🍻 Tavern Veteran", "description": "Play 100 games."},
+    "DRAGONS_LUCK": {"name": "🐉 Dragon's Luck", "description": "Win with 21."},
+    "BUST_MAGNET": {"name": "🧨 Bust Magnet", "description": "Bust 10 times."},
+    "BIG_WINNER": {"name": "🪙 Big Winner", "description": "Win 500+ gold in one hand."},
+    "HIGH_ROLLER": {"name": "💎 High Roller", "description": "Wager 5,000 gold."},
+    "HOUSE_FAVORITE": {"name": "😈 The House's Favorite", "description": "Lose 5,000 gold."},
+    "FOUNDER": {"name": "🏆 Founder of The Tavern", "description": "The one responsible for everyone's gambling addiction."},
+}
