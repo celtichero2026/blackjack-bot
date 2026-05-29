@@ -94,3 +94,61 @@ def get_leaderboard(limit: int = 10):
 
     return rows
 
+def get_balance(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        "SELECT balance FROM players WHERE user_id = ?",
+        (str(user_id),)
+    )
+
+    balance = cur.fetchone()[0]
+
+    conn.commit()
+    conn.close()
+
+    return balance
+
+
+def record_game_result(user_id: int, result: str, amount_change: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    if result == "win":
+        cur.execute("""
+            UPDATE players
+            SET balance = balance + ?,
+                wins = wins + 1,
+                games_played = games_played + 1
+            WHERE user_id = ?
+        """, (amount_change, str(user_id)))
+
+    elif result == "loss":
+        cur.execute("""
+            UPDATE players
+            SET balance = balance + ?,
+                losses = losses + 1,
+                games_played = games_played + 1
+            WHERE user_id = ?
+        """, (amount_change, str(user_id)))
+
+    else:
+        cur.execute("""
+            UPDATE players
+            SET games_played = games_played + 1
+            WHERE user_id = ?
+        """, (str(user_id),))
+
+    conn.commit()
+    conn.close()
