@@ -18,6 +18,7 @@ from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
 from achievements import ACHIEVEMENTS
 
+TROPHY_ID = 875349215876894720
 
 BASE_BET = 100
 
@@ -248,6 +249,26 @@ class BlackjackTableView(discord.ui.View):
         self.host_id = host_id
         self.players = [host_id]
 
+    def build_table_embed(self):
+        player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
+
+        if TROPHY_ID in self.players:
+            player_list += (
+                "\n\n🏆 **THE INSPIRATION OF THE TAVERN HAS ARRIVED** 🏆\n"
+                "The one responsible for everyone's gambling addiction."
+            )
+
+        return discord.Embed(
+            title="🃏 Blackjack Table",
+            description=(
+                f"**Bet:** {BASE_BET:,} gold\n\n"
+                f"**Players:**\n{player_list}\n\n"
+                "Click **Join Table** to sit down.\n"
+                "Host can click **Start Game** when ready."
+            ),
+            color=discord.Color.dark_gold()
+        )
+
     @discord.ui.button(label="Join Table", emoji="🍺", style=discord.ButtonStyle.green)
     async def join_table(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id in self.players:
@@ -266,20 +287,10 @@ class BlackjackTableView(discord.ui.View):
 
         self.players.append(interaction.user.id)
 
-        player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
-
-        embed = discord.Embed(
-            title="🃏 Blackjack Table",
-            description=(
-                f"**Bet:** {BASE_BET:,} gold\n\n"
-                f"**Players:**\n{player_list}\n\n"
-                "Click **Join Table** to sit down.\n"
-                "Host can click **Start Game** when ready."
-            ),
-            color=discord.Color.dark_gold()
+        await interaction.response.edit_message(
+            embed=self.build_table_embed(),
+            view=self
         )
-
-        await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="Start Game", emoji="▶️", style=discord.ButtonStyle.blurple)
     async def start_game(self, interaction: discord.Interaction, button: discord.ui.Button):
