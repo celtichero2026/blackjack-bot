@@ -324,7 +324,6 @@ class TavernView(discord.ui.View):
             biggest_win,
             biggest_loss,
             total_wagered,
-            achievements,
             title
         ) = profile
 
@@ -333,13 +332,19 @@ class TavernView(discord.ui.View):
             win_rate = (wins / games_played) * 100
 
         earned_achievements = get_player_achievements(interaction.user.id)
-        
+
         if earned_achievements:
             achievement_text = "\n".join(
                 [achievement_id for achievement_id, date_earned in earned_achievements[:10]]
             )
         else:
             achievement_text = "No achievements yet. Go make questionable choices."
+
+        embed = discord.Embed(
+            title=f"👤 {interaction.user.display_name}'s Tavern Profile",
+            description=f"**Title:** {title}",
+            color=discord.Color.gold()
+        )
 
         embed.add_field(
             name="💰 Gold",
@@ -453,6 +458,7 @@ class TavernView(discord.ui.View):
             ephemeral=True
         )
 
+
 class Tavern(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -473,6 +479,7 @@ class Tavern(commands.Cog):
                 "**Available:**\n"
                 "🍺 Daily Gold\n"
                 "💰 Balance\n"
+                "👤 Profile\n"
                 "🃏 Blackjack\n"
                 "🏆 Leaderboard"
             ),
