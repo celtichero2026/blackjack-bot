@@ -19,6 +19,7 @@ from achievement_service import check_achievements
 from achievements import ACHIEVEMENTS
 
 TROPHY_ID = 875349215876894720
+FOUNDER_ID = 502268158749573132
 
 BASE_BET = 100
 
@@ -255,6 +256,11 @@ class BlackjackTableView(discord.ui.View):
         if TROPHY_ID in self.players:
             player_list += (
                 "\n\n🏆 **THE INSPIRATION OF THE TAVERN HAS ARRIVED** 🏆\n"
+                
+            )
+        if FOUNDER_ID in self.players:
+            player_list += (
+                "\n\n🏆 **THE CREATOR OF THE TAVERN HAS ARRIVED** 🏆\n"
                 "The one responsible for everyone's gambling addiction."
             )
 
