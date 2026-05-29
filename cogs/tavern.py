@@ -4,6 +4,7 @@ from discord import app_commands
 from datetime import datetime, timezone
 from config import TAVERN_CHANNEL_ID, DAILY_REWARD
 from database import get_or_create_player, claim_daily, get_leaderboard
+from games.blackjack_engine import Deck, hand_value
 
 
 
