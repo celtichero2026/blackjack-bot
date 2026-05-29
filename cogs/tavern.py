@@ -15,6 +15,7 @@ from database import (
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
+from achievements import ACHIEVEMENTS
 
 
 BASE_BET = 100
@@ -372,7 +373,13 @@ class TavernView(discord.ui.View):
 
         if earned_achievements:
             achievement_text = "\n".join(
-                [achievement_id for achievement_id, date_earned in earned_achievements[:10]]
+                [
+                    ACHIEVEMENTS.get(
+                        achievement_id,
+                        {"name": achievement_id}
+                    )["name"]
+                    for achievement_id, date_earned in earned_achievements[:10]
+                ]
             )
         else:
             achievement_text = "No achievements yet. Go make questionable choices."
