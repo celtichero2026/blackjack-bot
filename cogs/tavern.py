@@ -13,14 +13,19 @@ from database import (
     record_game_result,
     get_profile,
     get_player_achievements,
+    record_wager,
+    record_double,
+    record_blackjack,
+    update_biggest_win,
+    update_biggest_loss,
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
 from achievements import ACHIEVEMENTS
 
+
 TROPHY_ID = 875349215876894720
 FOUNDER_ID = 502268158749573132
-
 BASE_BET = 100
 
 
@@ -30,6 +35,18 @@ def is_tavern_channel(interaction):
 
 def format_hand(hand):
     return " ".join([f"{card[0]}{card[1]}" for card in hand])
+
+
+def add_achievement_text(player_id, result):
+    new_achievements = check_achievements(player_id)
+
+    if new_achievements:
+        result += (
+            "\n🏆 Achievement Unlocked:\n"
+            + "\n".join(new_achievements)
+        )
+
+    return result
 
 
 class BlackjackGameView(discord.ui.View):
@@ -99,60 +116,33 @@ class BlackjackGameView(discord.ui.View):
             bet = self.player_bets[player_id]
 
             if player_total > 21:
-                result = "Bust — lost"
+                result = f"Bust — lost **{bet:,} gold**"
                 record_game_result(player_id, "loss", -bet)
-                new_achievements = check_achievements(player_id)
-
-                if new_achievements:
-                    result += (
-                        "\n🏆 Achievement Unlocked:\n"
-                        + "\n".join(new_achievements)
-                    )
+                update_biggest_loss(player_id, bet)
+                result = add_achievement_text(player_id, result)
 
             elif dealer_total > 21:
                 result = f"Dealer bust — won **{bet:,} gold**"
                 record_game_result(player_id, "win", bet)
-                new_achievements = check_achievements(player_id)
-
-                if new_achievements:
-                    result += (
-                        "\n🏆 Achievement Unlocked:\n"
-                        + "\n".join(new_achievements)
-                    )
+                update_biggest_win(player_id, bet)
+                result = add_achievement_text(player_id, result)
 
             elif player_total > dealer_total:
                 result = f"Won **{bet:,} gold**"
                 record_game_result(player_id, "win", bet)
-                new_achievements = check_achievements(player_id)
-
-                if new_achievements:
-                    result += (
-                        "\n🏆 Achievement Unlocked:\n"
-                        + "\n".join(new_achievements)
-                    )
-                
+                update_biggest_win(player_id, bet)
+                result = add_achievement_text(player_id, result)
 
             elif player_total < dealer_total:
                 result = f"Lost **{bet:,} gold**"
                 record_game_result(player_id, "loss", -bet)
-                new_achievements = check_achievements(player_id)
-
-                if new_achievements:
-                    result += (
-                        "\n🏆 Achievement Unlocked:\n"
-                        + "\n".join(new_achievements)
-                    )
+                update_biggest_loss(player_id, bet)
+                result = add_achievement_text(player_id, result)
 
             else:
                 result = "Push"
                 record_game_result(player_id, "push", 0)
-                new_achievements = check_achievements(player_id)
-
-                if new_achievements:
-                    result += (
-                        "\n🏆 Achievement Unlocked:\n"
-                        + "\n".join(new_achievements)
-                    )
+                result = add_achievement_text(player_id, result)
 
             text += f"<@{player_id}>: **{result}**\n"
 
@@ -238,6 +228,8 @@ class BlackjackGameView(discord.ui.View):
             return
 
         self.player_bets[interaction.user.id] = current_bet * 2
+        record_double(interaction.user.id)
+
         self.has_acted[interaction.user.id] = True
         self.player_hands[interaction.user.id].append(self.deck.draw())
 
@@ -255,13 +247,14 @@ class BlackjackTableView(discord.ui.View):
 
         if TROPHY_ID in self.players:
             player_list += (
-                "\n\n🏆 **THE INSPIRATION OF THE TAVERN HAS ARRIVED** 🏆\n"
-                
+                "\n\n🎰 **THE INSPIRATION OF THE TAVERN HAS ARRIVED** 🎰\n"
+                "This entire establishment is technically his fault."
             )
+
         if FOUNDER_ID in self.players:
             player_list += (
-                "\n\n🏆 **THE CREATOR OF THE TAVERN HAS ARRIVED** 🏆\n"
-                "The one responsible for everyone's gambling addiction."
+                "\n\n👑 **THE CREATOR OF THE TAVERN HAS ARRIVED** 👑\n"
+                "All complaints may be directed to management."
             )
 
         return discord.Embed(
@@ -321,6 +314,10 @@ class BlackjackTableView(discord.ui.View):
 
         for player_id in self.players:
             player_hands[player_id] = [deck.draw(), deck.draw()]
+            record_wager(player_id, BASE_BET)
+
+            if len(player_hands[player_id]) == 2 and hand_value(player_hands[player_id]) == 21:
+                record_blackjack(player_id)
 
         game_view = BlackjackGameView(deck, dealer_hand, player_hands, self.players)
 
@@ -329,6 +326,7 @@ class BlackjackTableView(discord.ui.View):
             view=game_view
         )
 
+
 class DiceTableView(discord.ui.View):
     def __init__(self, host_id):
         super().__init__(timeout=None)
@@ -336,24 +334,56 @@ class DiceTableView(discord.ui.View):
         self.players = [host_id]
         self.bot_added = False
 
-    @discord.ui.button(label="Roll Dice", emoji="🎲", style=discord.ButtonStyle.red)
-    async def roll_dice(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.host_id:
+    def build_table_embed(self):
+        player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
+
+        if self.bot_added:
+            player_list += "\n- 🤖 Tavern Bot"
+
+        if TROPHY_ID in self.players:
+            player_list += (
+                "\n\n🎰 **THE INSPIRATION OF THE TAVERN HAS ARRIVED** 🎰\n"
+                "This entire establishment is technically his fault."
+            )
+
+        if FOUNDER_ID in self.players:
+            player_list += (
+                "\n\n👑 **THE CREATOR OF THE TAVERN HAS ARRIVED** 👑\n"
+                "All complaints may be directed to management."
+            )
+
+        return discord.Embed(
+            title="🎲 Dice Table",
+            description=(
+                f"**Bet:** {BASE_BET:,} gold\n\n"
+                f"**Players:**\n{player_list}\n\n"
+                "Highest roll wins."
+            ),
+            color=discord.Color.dark_gold()
+        )
+
+    @discord.ui.button(label="Join Dice", emoji="🎲", style=discord.ButtonStyle.green)
+    async def join_dice(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id in self.players:
             await interaction.response.send_message(
-                "Only the host can roll.",
+                "You already joined this dice table.",
                 ephemeral=True
             )
             return
 
-        if len(self.players) < 2 and not self.bot_added:
+        if get_balance(interaction.user.id) < BASE_BET:
             await interaction.response.send_message(
-                "🎲 You need at least **one opponent** or the **bot player** before rolling.",
+                f"You need at least **{BASE_BET:,} gold** to join.",
                 ephemeral=True
             )
             return
 
         self.players.append(interaction.user.id)
-        await self.update_table(interaction)
+
+        await interaction.response.edit_message(
+            embed=self.build_table_embed(),
+            view=self
+        )
 
     @discord.ui.button(label="Add Bot", emoji="🤖", style=discord.ButtonStyle.blurple)
     async def add_bot(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -372,7 +402,11 @@ class DiceTableView(discord.ui.View):
             return
 
         self.bot_added = True
-        await self.update_table(interaction)
+
+        await interaction.response.edit_message(
+            embed=self.build_table_embed(),
+            view=self
+        )
 
     @discord.ui.button(label="Roll Dice", emoji="🎲", style=discord.ButtonStyle.red)
     async def roll_dice(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -383,6 +417,24 @@ class DiceTableView(discord.ui.View):
             )
             return
 
+        if len(self.players) < 2 and not self.bot_added:
+            await interaction.response.send_message(
+                "🎲 You need at least **one opponent** or the **bot player** before rolling.",
+                ephemeral=True
+            )
+            return
+
+        for player_id in self.players:
+            if get_balance(player_id) < BASE_BET:
+                await interaction.response.send_message(
+                    f"<@{player_id}> does not have enough gold to roll.",
+                    ephemeral=True
+                )
+                return
+
+        for player_id in self.players:
+            record_wager(player_id, BASE_BET)
+
         rolls = {}
 
         for player_id in self.players:
@@ -392,7 +444,11 @@ class DiceTableView(discord.ui.View):
         if self.bot_added:
             bot_roll = random.randint(1, 6)
 
-        highest = max(list(rolls.values()) + ([bot_roll] if bot_roll else []))
+        all_rolls = list(rolls.values())
+        if bot_roll is not None:
+            all_rolls.append(bot_roll)
+
+        highest = max(all_rolls)
 
         human_winners = [
             player_id for player_id, roll in rolls.items()
@@ -414,7 +470,10 @@ class DiceTableView(discord.ui.View):
         if bot_wins and not human_winners:
             for player_id in self.players:
                 record_game_result(player_id, "loss", -BASE_BET)
-            description += "🤖 Tavern Bot wins. Everyone loses.\n"
+                update_biggest_loss(player_id, BASE_BET)
+                result = "Lost **100 gold**"
+                result = add_achievement_text(player_id, result)
+                description += f"<@{player_id}>: **{result}**\n"
 
         elif len(human_winners) == 1 and not bot_wins:
             winner = human_winners[0]
@@ -422,15 +481,22 @@ class DiceTableView(discord.ui.View):
             for player_id in self.players:
                 if player_id == winner:
                     record_game_result(player_id, "win", BASE_BET)
-                    description += f"<@{player_id}> wins **{BASE_BET:,} gold**\n"
+                    update_biggest_win(player_id, BASE_BET)
+                    result = f"Won **{BASE_BET:,} gold**"
                 else:
                     record_game_result(player_id, "loss", -BASE_BET)
-                    description += f"<@{player_id}> loses **{BASE_BET:,} gold**\n"
+                    update_biggest_loss(player_id, BASE_BET)
+                    result = f"Lost **{BASE_BET:,} gold**"
+
+                result = add_achievement_text(player_id, result)
+                description += f"<@{player_id}>: **{result}**\n"
 
         else:
             for player_id in self.players:
                 record_game_result(player_id, "push", 0)
-            description += "Tie! Bets are pushed.\n"
+                result = "Push"
+                result = add_achievement_text(player_id, result)
+                description += f"<@{player_id}>: **{result}**\n"
 
         embed = discord.Embed(
             title="🎲 Dice Game",
@@ -440,23 +506,6 @@ class DiceTableView(discord.ui.View):
 
         await interaction.response.edit_message(embed=embed, view=None)
 
-    async def update_table(self, interaction):
-        player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
-
-        if self.bot_added:
-            player_list += "\n- 🤖 Tavern Bot"
-
-        embed = discord.Embed(
-            title="🎲 Dice Table",
-            description=(
-                f"**Bet:** {BASE_BET:,} gold\n\n"
-                f"**Players:**\n{player_list}\n\n"
-                "Highest roll wins."
-            ),
-            color=discord.Color.dark_gold()
-        )
-
-        await interaction.response.edit_message(embed=embed, view=self)
 
 class TavernView(discord.ui.View):
     def __init__(self):
@@ -603,21 +652,11 @@ class TavernView(discord.ui.View):
             )
             return
 
-        embed = discord.Embed(
-            title="🃏 Blackjack Table",
-            description=(
-                f"**Bet:** {BASE_BET:,} gold\n\n"
-                "**Players:**\n"
-                f"- {interaction.user.mention}\n\n"
-                "Click **Join Table** to sit down.\n"
-                "Host can click **Start Game** when ready."
-            ),
-            color=discord.Color.dark_gold()
-        )
+        table_view = BlackjackTableView(host_id=interaction.user.id)
 
         await interaction.response.send_message(
-            embed=embed,
-            view=BlackjackTableView(host_id=interaction.user.id)
+            embed=table_view.build_table_embed(),
+            view=table_view
         )
 
     @discord.ui.button(label="Dice", emoji="🎲", style=discord.ButtonStyle.green)
@@ -629,20 +668,11 @@ class TavernView(discord.ui.View):
             )
             return
 
-        embed = discord.Embed(
-            title="🎲 Dice Table",
-            description=(
-                f"**Bet:** {BASE_BET:,} gold\n\n"
-                "**Players:**\n"
-                f"- {interaction.user.mention}\n\n"
-                "Highest roll wins."
-            ),
-            color=discord.Color.dark_gold()
-        )
+        table_view = DiceTableView(host_id=interaction.user.id)
 
         await interaction.response.send_message(
-            embed=embed,
-            view=DiceTableView(host_id=interaction.user.id)
+            embed=table_view.build_table_embed(),
+            view=table_view
         )
 
     @discord.ui.button(label="Leaderboard", emoji="🏆", style=discord.ButtonStyle.gray)
