@@ -251,3 +251,78 @@ def get_player_achievements(user_id: int):
     conn.close()
 
     return rows
+
+def record_wager(user_id: int, amount: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("INSERT OR IGNORE INTO players (user_id) VALUES (?)", (str(user_id),))
+
+    cur.execute("""
+        UPDATE players
+        SET total_wagered = total_wagered + ?
+        WHERE user_id = ?
+    """, (amount, str(user_id)))
+
+    conn.commit()
+    conn.close()
+
+
+def record_double(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("INSERT OR IGNORE INTO players (user_id) VALUES (?)", (str(user_id),))
+
+    cur.execute("""
+        UPDATE players
+        SET doubles = doubles + 1
+        WHERE user_id = ?
+    """, (str(user_id),))
+
+    conn.commit()
+    conn.close()
+
+
+def record_blackjack(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("INSERT OR IGNORE INTO players (user_id) VALUES (?)", (str(user_id),))
+
+    cur.execute("""
+        UPDATE players
+        SET blackjacks = blackjacks + 1
+        WHERE user_id = ?
+    """, (str(user_id),))
+
+    conn.commit()
+    conn.close()
+
+
+def update_biggest_win(user_id: int, amount: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE players
+        SET biggest_win = MAX(biggest_win, ?)
+        WHERE user_id = ?
+    """, (amount, str(user_id)))
+
+    conn.commit()
+    conn.close()
+
+
+def update_biggest_loss(user_id: int, amount: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE players
+        SET biggest_loss = MAX(biggest_loss, ?)
+        WHERE user_id = ?
+    """, (amount, str(user_id)))
+
+    conn.commit()
+    conn.close()
