@@ -23,7 +23,6 @@ def get_profile(user_id: int):
             biggest_win,
             biggest_loss,
             total_wagered,
-            achievements,
             title
         FROM players
         WHERE user_id = ?
@@ -52,7 +51,7 @@ def setup_database():
             last_daily TEXT
         )
     """)
-    
+
     extra_columns = {
         "pushes": "INTEGER DEFAULT 0",
         "blackjacks": "INTEGER DEFAULT 0",
@@ -60,16 +59,26 @@ def setup_database():
         "biggest_win": "INTEGER DEFAULT 0",
         "biggest_loss": "INTEGER DEFAULT 0",
         "total_wagered": "INTEGER DEFAULT 0",
-        "achievements": "TEXT DEFAULT ''",
         "title": "TEXT DEFAULT '🍺 Tavern Newbie'"
     }
 
     for column, definition in extra_columns.items():
         try:
-            cur.execute(f"ALTER TABLE players ADD COLUMN {column} {definition}")
+            cur.execute(
+                f"ALTER TABLE players ADD COLUMN {column} {definition}"
+            )
         except sqlite3.OperationalError:
             pass
-            
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS player_achievements (
+            user_id TEXT,
+            achievement_id TEXT,
+            date_earned TEXT,
+            PRIMARY KEY (user_id, achievement_id)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -201,3 +210,44 @@ def record_game_result(user_id: int, result: str, amount_change: int):
 
     conn.commit()
     conn.close()
+
+def award_achievement(user_id: int, achievement_id: str, date_earned: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_achievements
+        (user_id, achievement_id, date_earned)
+        VALUES (?, ?, ?)
+        """,
+        (str(user_id), achievement_id, date_earned)
+    )
+
+    awarded = cur.rowcount > 0
+
+    conn.commit()
+    conn.close()
+
+    return awarded
+
+
+def get_player_achievements(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT achievement_id, date_earned
+        FROM player_achievements
+        WHERE user_id = ?
+        ORDER BY date_earned ASC
+        """,
+        (str(user_id),)
+    )
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return rows
