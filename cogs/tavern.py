@@ -2,15 +2,15 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timezone
+
 from config import TAVERN_CHANNEL_ID, DAILY_REWARD
 from database import get_or_create_player, claim_daily, get_leaderboard
 from games.blackjack_engine import Deck, hand_value
 
 
-
-
 def is_tavern_channel(interaction):
     return interaction.channel_id == TAVERN_CHANNEL_ID
+
 
 class BlackjackTableView(discord.ui.View):
     def __init__(self, host_id):
@@ -20,6 +20,7 @@ class BlackjackTableView(discord.ui.View):
 
     @discord.ui.button(label="Join Table", emoji="🍺", style=discord.ButtonStyle.green)
     async def join_table(self, interaction: discord.Interaction, button: discord.ui.Button):
+
         if interaction.user.id in self.players:
             await interaction.response.send_message(
                 "You are already sitting at this table.",
@@ -29,7 +30,9 @@ class BlackjackTableView(discord.ui.View):
 
         self.players.append(interaction.user.id)
 
-        player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
+        player_list = "\n".join(
+            [f"- <@{player_id}>" for player_id in self.players]
+        )
 
         embed = discord.Embed(
             title="🃏 Blackjack Table",
@@ -42,10 +45,14 @@ class BlackjackTableView(discord.ui.View):
             color=discord.Color.dark_gold()
         )
 
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=self
+        )
 
     @discord.ui.button(label="Start Game", emoji="▶️", style=discord.ButtonStyle.blurple)
     async def start_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+
         if interaction.user.id != self.host_id:
             await interaction.response.send_message(
                 "Only the table host can start the game.",
@@ -53,10 +60,54 @@ class BlackjackTableView(discord.ui.View):
             )
             return
 
-        await interaction.response.send_message(
-            "🃏 Game start is next. Table creation works!",
-            ephemeral=True
+        deck = Deck()
+
+        dealer_hand = [
+            deck.draw(),
+            deck.draw()
+        ]
+
+        player_hands = {}
+
+        for player_id in self.players:
+            player_hands[player_id] = [
+                deck.draw(),
+                deck.draw()
+            ]
+
+        description = ""
+
+        dealer_visible = dealer_hand[1]
+
+        description += (
+            f"**Dealer**\n"
+            f"🂠 {dealer_visible[0]}{dealer_visible[1]}\n\n"
         )
+
+        for player_id, hand in player_hands.items():
+            cards = " ".join(
+                [f"{card[0]}{card[1]}" for card in hand]
+            )
+
+            total = hand_value(hand)
+
+            description += (
+                f"**<@{player_id}>**\n"
+                f"{cards}\n"
+                f"Total: **{total}**\n\n"
+            )
+
+        embed = discord.Embed(
+            title="🃏 Blackjack",
+            description=description,
+            color=discord.Color.dark_gold()
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=None
+        )
+
 
 class TavernView(discord.ui.View):
     def __init__(self):
@@ -136,7 +187,10 @@ class TavernView(discord.ui.View):
             color=discord.Color.gold()
         )
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
 
 
 class Tavern(commands.Cog):
@@ -168,7 +222,10 @@ class Tavern(commands.Cog):
 
         embed.set_footer(text="The house always wins. Unless it doesn't.")
 
-        await interaction.response.send_message(embed=embed, view=TavernView())
+        await interaction.response.send_message(
+            embed=embed,
+            view=TavernView()
+        )
 
 
 async def setup(bot):
