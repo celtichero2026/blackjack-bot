@@ -10,6 +10,7 @@ from database import (
     get_leaderboard,
     get_balance,
     record_game_result,
+    get_profile,
 )
 from games.blackjack_engine import Deck, hand_value
 
@@ -303,6 +304,104 @@ class TavernView(discord.ui.View):
             ephemeral=True
         )
 
+    @discord.ui.button(label="Profile", emoji="👤", style=discord.ButtonStyle.secondary)
+    async def profile_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        profile = get_profile(interaction.user.id)
+
+        if profile is None:
+            get_or_create_player(interaction.user.id)
+            profile = get_profile(interaction.user.id)
+
+        (
+            balance,
+            wins,
+            losses,
+            games_played,
+            pushes,
+            blackjacks,
+            doubles,
+            biggest_win,
+            biggest_loss,
+            total_wagered,
+            achievements,
+            title
+        ) = profile
+
+        win_rate = 0
+        if games_played > 0:
+            win_rate = (wins / games_played) * 100
+
+        achievement_list = achievements.split(",") if achievements else []
+
+        if achievement_list:
+            achievement_text = "\n".join(achievement_list[:10])
+        else:
+            achievement_text = "No achievements yet. Go make questionable choices."
+
+        embed = discord.Embed(
+            title=f"👤 {interaction.user.display_name}'s Tavern Profile",
+            description=f"**Title:** {title}",
+            color=discord.Color.gold()
+        )
+
+        embed.add_field(
+            name="💰 Gold",
+            value=f"{balance:,}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎮 Games",
+            value=f"{games_played:,}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="📊 Win Rate",
+            value=f"{win_rate:.1f}%",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🏆 Record",
+            value=(
+                f"Wins: **{wins:,}**\n"
+                f"Losses: **{losses:,}**\n"
+                f"Pushes: **{pushes:,}**"
+            ),
+            inline=True
+        )
+
+        embed.add_field(
+            name="🃏 Blackjack Stats",
+            value=(
+                f"Blackjacks: **{blackjacks:,}**\n"
+                f"Doubles: **{doubles:,}**"
+            ),
+            inline=True
+        )
+
+        embed.add_field(
+            name="💸 Wager Stats",
+            value=(
+                f"Total Wagered: **{total_wagered:,}**\n"
+                f"Biggest Win: **{biggest_win:,}**\n"
+                f"Biggest Loss: **{biggest_loss:,}**"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="🎖 Achievements",
+            value=achievement_text,
+            inline=False
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
     @discord.ui.button(label="Blackjack", emoji="🃏", style=discord.ButtonStyle.red)
     async def blackjack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if get_balance(interaction.user.id) < BASE_BET:
@@ -356,7 +455,6 @@ class TavernView(discord.ui.View):
             embed=embed,
             ephemeral=True
         )
-
 
 class Tavern(commands.Cog):
     def __init__(self, bot):
