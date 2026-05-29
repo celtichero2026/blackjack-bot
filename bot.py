@@ -19,14 +19,10 @@ async def on_ready():
 
     guild = discord.Object(id=GUILD_ID)
 
-    bot.tree.clear_commands(guild=None)
-    await bot.tree.sync()
-
-    bot.tree.copy_global_to(guild=guild)
-    await bot.tree.sync(guild=guild)
+    synced = await bot.tree.sync(guild=guild)
 
     print(f"Logged in as {bot.user}")
-    print(f"Synced commands to guild {GUILD_ID}")
+    print(f"Synced {len(synced)} commands to guild {GUILD_ID}")
 
 
 async def main():
