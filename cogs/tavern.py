@@ -11,6 +11,7 @@ from database import (
     get_balance,
     record_game_result,
     get_profile,
+    get_player_achievements,
 )
 from games.blackjack_engine import Deck, hand_value
 
@@ -331,18 +332,14 @@ class TavernView(discord.ui.View):
         if games_played > 0:
             win_rate = (wins / games_played) * 100
 
-        achievement_list = achievements.split(",") if achievements else []
-
-        if achievement_list:
-            achievement_text = "\n".join(achievement_list[:10])
+        earned_achievements = get_player_achievements(interaction.user.id)
+        
+        if earned_achievements:
+            achievement_text = "\n".join(
+                [achievement_id for achievement_id, date_earned in earned_achievements[:10]]
+            )
         else:
             achievement_text = "No achievements yet. Go make questionable choices."
-
-        embed = discord.Embed(
-            title=f"👤 {interaction.user.display_name}'s Tavern Profile",
-            description=f"**Title:** {title}",
-            color=discord.Color.gold()
-        )
 
         embed.add_field(
             name="💰 Gold",
