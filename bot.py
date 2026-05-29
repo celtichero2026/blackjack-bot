@@ -20,6 +20,7 @@ async def main():
     async with bot:
         await bot.load_extension("cogs.economy")
         await bot.load_extension("cogs.blackjack")
+        await bot.load_extension("cogs.tavern")
         await bot.start(TOKEN)
 
 asyncio.run(main())
