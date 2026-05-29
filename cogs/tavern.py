@@ -4,8 +4,17 @@ from discord import app_commands
 from datetime import datetime, timezone
 
 from config import TAVERN_CHANNEL_ID, DAILY_REWARD
-from database import get_or_create_player, claim_daily, get_leaderboard, get_balance, record_game_result
+from database import (
+    get_or_create_player,
+    claim_daily,
+    get_leaderboard,
+    get_balance,
+    record_game_result,
+)
 from games.blackjack_engine import Deck, hand_value
+
+
+BASE_BET = 100
 
 
 def is_tavern_channel(interaction):
@@ -24,7 +33,16 @@ class BlackjackGameView(discord.ui.View):
         self.player_hands = player_hands
         self.players = players
         self.current_index = 0
-        self.finished_players = set()
+
+        self.player_bets = {
+            player_id: BASE_BET
+            for player_id in players
+        }
+
+        self.has_acted = {
+            player_id: False
+            for player_id in players
+        }
 
     def current_player_id(self):
         return self.players[self.current_index]
@@ -44,6 +62,7 @@ class BlackjackGameView(discord.ui.View):
             hand = self.player_hands[player_id]
             cards = format_hand(hand)
             total = hand_value(hand)
+            bet = self.player_bets[player_id]
 
             marker = ""
             if not game_over and player_id == self.current_player_id():
@@ -52,11 +71,11 @@ class BlackjackGameView(discord.ui.View):
             description += (
                 f"**<@{player_id}>** {marker}\n"
                 f"{cards}\n"
-                f"Total: **{total}**\n\n"
+                f"Total: **{total}** | Bet: **{bet:,} gold**\n\n"
             )
 
         if game_over:
-            description += self.result_text()
+            description += self.finish_game_and_results()
 
         return discord.Embed(
             title="🃏 Blackjack",
@@ -64,23 +83,33 @@ class BlackjackGameView(discord.ui.View):
             color=discord.Color.dark_gold()
         )
 
-    def result_text(self):
+    def finish_game_and_results(self):
         dealer_total = hand_value(self.dealer_hand)
         text = "**Results**\n"
 
         for player_id in self.players:
             player_total = hand_value(self.player_hands[player_id])
+            bet = self.player_bets[player_id]
 
             if player_total > 21:
                 result = "Bust — lost"
+                record_game_result(player_id, "loss", -bet)
+
             elif dealer_total > 21:
-                result = "Dealer bust — won"
+                result = f"Dealer bust — won **{bet:,} gold**"
+                record_game_result(player_id, "win", bet)
+
             elif player_total > dealer_total:
-                result = "Won"
+                result = f"Won **{bet:,} gold**"
+                record_game_result(player_id, "win", bet)
+
             elif player_total < dealer_total:
-                result = "Lost"
+                result = f"Lost **{bet:,} gold**"
+                record_game_result(player_id, "loss", -bet)
+
             else:
                 result = "Push"
+                record_game_result(player_id, "push", 0)
 
             text += f"<@{player_id}>: **{result}**\n"
 
@@ -115,6 +144,7 @@ class BlackjackGameView(discord.ui.View):
             )
             return
 
+        self.has_acted[interaction.user.id] = True
         self.player_hands[interaction.user.id].append(self.deck.draw())
 
         if hand_value(self.player_hands[interaction.user.id]) > 21:
@@ -135,6 +165,39 @@ class BlackjackGameView(discord.ui.View):
             )
             return
 
+        self.has_acted[interaction.user.id] = True
+        await self.advance_turn_or_finish(interaction)
+
+    @discord.ui.button(label="Double", emoji="💰", style=discord.ButtonStyle.red)
+    async def double(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.current_player_id():
+            await interaction.response.send_message(
+                "It is not your turn.",
+                ephemeral=True
+            )
+            return
+
+        if self.has_acted[interaction.user.id]:
+            await interaction.response.send_message(
+                "You can only double before taking another action.",
+                ephemeral=True
+            )
+            return
+
+        current_bet = self.player_bets[interaction.user.id]
+        balance = get_balance(interaction.user.id)
+
+        if balance < current_bet * 2:
+            await interaction.response.send_message(
+                "You do not have enough gold to double down.",
+                ephemeral=True
+            )
+            return
+
+        self.player_bets[interaction.user.id] = current_bet * 2
+        self.has_acted[interaction.user.id] = True
+        self.player_hands[interaction.user.id].append(self.deck.draw())
+
         await self.advance_turn_or_finish(interaction)
 
 
@@ -147,7 +210,17 @@ class BlackjackTableView(discord.ui.View):
     @discord.ui.button(label="Join Table", emoji="🍺", style=discord.ButtonStyle.green)
     async def join_table(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id in self.players:
-            await interaction.response.send_message("You are already sitting at this table.", ephemeral=True)
+            await interaction.response.send_message(
+                "You are already sitting at this table.",
+                ephemeral=True
+            )
+            return
+
+        if get_balance(interaction.user.id) < BASE_BET:
+            await interaction.response.send_message(
+                f"You need at least **{BASE_BET:,} gold** to join this table.",
+                ephemeral=True
+            )
             return
 
         self.players.append(interaction.user.id)
@@ -157,7 +230,7 @@ class BlackjackTableView(discord.ui.View):
         embed = discord.Embed(
             title="🃏 Blackjack Table",
             description=(
-                "**Bet:** 100 gold\n\n"
+                f"**Bet:** {BASE_BET:,} gold\n\n"
                 f"**Players:**\n{player_list}\n\n"
                 "Click **Join Table** to sit down.\n"
                 "Host can click **Start Game** when ready."
@@ -170,8 +243,19 @@ class BlackjackTableView(discord.ui.View):
     @discord.ui.button(label="Start Game", emoji="▶️", style=discord.ButtonStyle.blurple)
     async def start_game(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.host_id:
-            await interaction.response.send_message("Only the table host can start the game.", ephemeral=True)
+            await interaction.response.send_message(
+                "Only the table host can start the game.",
+                ephemeral=True
+            )
             return
+
+        for player_id in self.players:
+            if get_balance(player_id) < BASE_BET:
+                await interaction.response.send_message(
+                    f"<@{player_id}> does not have enough gold to play.",
+                    ephemeral=True
+                )
+                return
 
         deck = Deck()
         dealer_hand = [deck.draw(), deck.draw()]
@@ -213,14 +297,25 @@ class TavernView(discord.ui.View):
     async def balance_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         player = get_or_create_player(interaction.user.id)
         balance = player[0]
-        await interaction.response.send_message(f"💰 You have **{balance:,} gold**.", ephemeral=True)
+
+        await interaction.response.send_message(
+            f"💰 You have **{balance:,} gold**.",
+            ephemeral=True
+        )
 
     @discord.ui.button(label="Blackjack", emoji="🃏", style=discord.ButtonStyle.red)
     async def blackjack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if get_balance(interaction.user.id) < BASE_BET:
+            await interaction.response.send_message(
+                f"You need at least **{BASE_BET:,} gold** to open a blackjack table.",
+                ephemeral=True
+            )
+            return
+
         embed = discord.Embed(
             title="🃏 Blackjack Table",
             description=(
-                "**Bet:** 100 gold\n\n"
+                f"**Bet:** {BASE_BET:,} gold\n\n"
                 "**Players:**\n"
                 f"- {interaction.user.mention}\n\n"
                 "Click **Join Table** to sit down.\n"
@@ -239,7 +334,10 @@ class TavernView(discord.ui.View):
         rows = get_leaderboard(10)
 
         if not rows:
-            await interaction.response.send_message("🍺 No Tavern players yet.", ephemeral=True)
+            await interaction.response.send_message(
+                "🍺 No Tavern players yet.",
+                ephemeral=True
+            )
             return
 
         description = ""
@@ -254,7 +352,10 @@ class TavernView(discord.ui.View):
             color=discord.Color.gold()
         )
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
 
 
 class Tavern(commands.Cog):
@@ -264,7 +365,10 @@ class Tavern(commands.Cog):
     @app_commands.command(name="tavern", description="Open The Tavern menu")
     async def tavern(self, interaction: discord.Interaction):
         if not is_tavern_channel(interaction):
-            await interaction.response.send_message("🍺 TrophyBot only runs in **The Tavern**.", ephemeral=True)
+            await interaction.response.send_message(
+                "🍺 TrophyBot only runs in **The Tavern**.",
+                ephemeral=True
+            )
             return
 
         embed = discord.Embed(
@@ -282,7 +386,10 @@ class Tavern(commands.Cog):
 
         embed.set_footer(text="The house always wins. Unless it doesn't.")
 
-        await interaction.response.send_message(embed=embed, view=TavernView())
+        await interaction.response.send_message(
+            embed=embed,
+            view=TavernView()
+        )
 
 
 async def setup(bot):
