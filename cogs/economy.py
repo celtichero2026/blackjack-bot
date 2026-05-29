@@ -4,7 +4,7 @@ from discord import app_commands
 from datetime import datetime, timezone
 
 from config import TAVERN_CHANNEL_ID, DAILY_REWARD
-from database import get_or_create_player, claim_daily
+from database import get_or_create_player, claim_daily, get_leaderboard
 
 
 def is_tavern_channel(interaction):
@@ -63,6 +63,39 @@ class Economy(commands.Cog):
             ephemeral=True
         )
 
+
+    @app_commands.command(name="leaderboard", description="View the richest Tavern players")
+    async def leaderboard(self, interaction: discord.Interaction):
+
+        if not is_tavern_channel(interaction):
+            await interaction.response.send_message(
+                "🍺 TrophyBot only runs games in **The Tavern**.",
+                ephemeral=True
+            )
+            return
+
+        rows = get_leaderboard(10)
+
+        if not rows:
+            await interaction.response.send_message(
+                "🍺 No Tavern players yet.",
+                ephemeral=True
+            )
+            return
+
+        description = ""
+
+        for index, row in enumerate(rows, start=1):
+            user_id, balance, wins, losses, games_played = row
+            description += f"**{index}.** <@{user_id}> — **{balance:,} gold**\n"
+
+        embed = discord.Embed(
+            title="🏆 The Tavern Leaderboard",
+            description=description,
+            color=discord.Color.gold()
+        )
+
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Economy(bot))
