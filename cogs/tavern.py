@@ -467,22 +467,27 @@ class DiceTableView(discord.ui.View):
 
         description += "\n**Results:**\n"
 
+        pot = len(self.players) * BASE_BET
+
         if bot_wins and not human_winners:
             for player_id in self.players:
                 record_game_result(player_id, "loss", -BASE_BET)
                 update_biggest_loss(player_id, BASE_BET)
-                result = "Lost **100 gold**"
+                result = f"Lost **{BASE_BET:,} gold**"
                 result = add_achievement_text(player_id, result)
                 description += f"<@{player_id}>: **{result}**\n"
 
+            description += f"\n🤖 Tavern Bot takes the **{pot:,} gold** pot."
+
         elif len(human_winners) == 1 and not bot_wins:
             winner = human_winners[0]
+            winnings = pot - BASE_BET
 
             for player_id in self.players:
                 if player_id == winner:
-                    record_game_result(player_id, "win", BASE_BET)
-                    update_biggest_win(player_id, BASE_BET)
-                    result = f"Won **{BASE_BET:,} gold**"
+                    record_game_result(player_id, "win", winnings)
+                    update_biggest_win(player_id, winnings)
+                    result = f"Won the **{pot:,} gold** pot! Net gain: **{winnings:,} gold**"
                 else:
                     record_game_result(player_id, "loss", -BASE_BET)
                     update_biggest_loss(player_id, BASE_BET)
@@ -497,6 +502,8 @@ class DiceTableView(discord.ui.View):
                 result = "Push"
                 result = add_achievement_text(player_id, result)
                 description += f"<@{player_id}>: **{result}**\n"
+
+            description += f"\nTie! The **{pot:,} gold** pot is pushed."
 
         embed = discord.Embed(
             title="🎲 Dice Game",
