@@ -21,9 +21,27 @@ def setup_database():
             last_daily TEXT
         )
     """)
+    
+    extra_columns = {
+        "pushes": "INTEGER DEFAULT 0",
+        "blackjacks": "INTEGER DEFAULT 0",
+        "doubles": "INTEGER DEFAULT 0",
+        "biggest_win": "INTEGER DEFAULT 0",
+        "biggest_loss": "INTEGER DEFAULT 0",
+        "total_wagered": "INTEGER DEFAULT 0",
+        "achievements": "TEXT DEFAULT ''",
+        "title": "TEXT DEFAULT '🍺 Tavern Newbie'"
+    }
 
+    for column, definition in extra_columns.items():
+        try:
+            cur.execute(f"ALTER TABLE players ADD COLUMN {column} {definition}")
+        except sqlite3.OperationalError:
+            pass
+            
     conn.commit()
     conn.close()
+
 
 
 def get_or_create_player(user_id: int):
