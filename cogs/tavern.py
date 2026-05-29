@@ -603,7 +603,7 @@ class TavernView(discord.ui.View):
             view=BlackjackTableView(host_id=interaction.user.id)
         )
 
-        @discord.ui.button(label="Dice", emoji="🎲", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="Dice", emoji="🎲", style=discord.ButtonStyle.green)
     async def dice_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if get_balance(interaction.user.id) < BASE_BET:
             await interaction.response.send_message(
