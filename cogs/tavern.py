@@ -97,22 +97,58 @@ class BlackjackGameView(discord.ui.View):
             if player_total > 21:
                 result = "Bust — lost"
                 record_game_result(player_id, "loss", -bet)
+                new_achievements = check_achievements(player_id)
+
+                if new_achievements:
+                    result += (
+                        "\n🏆 Achievement Unlocked:\n"
+                        + "\n".join(new_achievements)
+                    )
 
             elif dealer_total > 21:
                 result = f"Dealer bust — won **{bet:,} gold**"
                 record_game_result(player_id, "win", bet)
+                new_achievements = check_achievements(player_id)
+
+                if new_achievements:
+                    result += (
+                        "\n🏆 Achievement Unlocked:\n"
+                        + "\n".join(new_achievements)
+                    )
 
             elif player_total > dealer_total:
                 result = f"Won **{bet:,} gold**"
                 record_game_result(player_id, "win", bet)
+                new_achievements = check_achievements(player_id)
+
+                if new_achievements:
+                    result += (
+                        "\n🏆 Achievement Unlocked:\n"
+                        + "\n".join(new_achievements)
+                    )
+                
 
             elif player_total < dealer_total:
                 result = f"Lost **{bet:,} gold**"
                 record_game_result(player_id, "loss", -bet)
+                new_achievements = check_achievements(player_id)
+
+                if new_achievements:
+                    result += (
+                        "\n🏆 Achievement Unlocked:\n"
+                        + "\n".join(new_achievements)
+                    )
 
             else:
                 result = "Push"
                 record_game_result(player_id, "push", 0)
+                new_achievements = check_achievements(player_id)
+
+                if new_achievements:
+                    result += (
+                        "\n🏆 Achievement Unlocked:\n"
+                        + "\n".join(new_achievements)
+                    )
 
             text += f"<@{player_id}>: **{result}**\n"
 
