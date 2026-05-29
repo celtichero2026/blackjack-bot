@@ -336,18 +336,18 @@ class DiceTableView(discord.ui.View):
         self.players = [host_id]
         self.bot_added = False
 
-    @discord.ui.button(label="Join Dice", emoji="🎲", style=discord.ButtonStyle.green)
-    async def join_dice(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id in self.players:
+    @discord.ui.button(label="Roll Dice", emoji="🎲", style=discord.ButtonStyle.red)
+    async def roll_dice(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.host_id:
             await interaction.response.send_message(
-                "You already joined this dice table.",
+                "Only the host can roll.",
                 ephemeral=True
             )
             return
 
-        if get_balance(interaction.user.id) < BASE_BET:
+        if len(self.players) < 2 and not self.bot_added:
             await interaction.response.send_message(
-                f"You need at least **{BASE_BET:,} gold** to join.",
+                "🎲 You need at least **one opponent** or the **bot player** before rolling.",
                 ephemeral=True
             )
             return
