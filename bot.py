@@ -18,6 +18,10 @@ async def on_ready():
     setup_database()
 
     guild = discord.Object(id=GUILD_ID)
+
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
+
     bot.tree.copy_global_to(guild=guild)
     await bot.tree.sync(guild=guild)
 
