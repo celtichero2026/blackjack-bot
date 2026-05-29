@@ -4,7 +4,6 @@ import discord
 from discord.ext import commands
 
 from database import setup_database
-from config import GUILD_ID
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -16,13 +15,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     setup_database()
-
-    guild = discord.Object(id=GUILD_ID)
-
-    synced = await bot.tree.sync(guild=guild)
+    await bot.tree.sync()
 
     print(f"Logged in as {bot.user}")
-    print(f"Synced {len(synced)} commands to guild {GUILD_ID}")
+    print("Synced global commands")
 
 
 async def main():
