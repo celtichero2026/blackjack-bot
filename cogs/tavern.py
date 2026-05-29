@@ -14,6 +14,7 @@ from database import (
     get_player_achievements,
 )
 from games.blackjack_engine import Deck, hand_value
+from achievement_service import check_achievements
 
 
 BASE_BET = 100
