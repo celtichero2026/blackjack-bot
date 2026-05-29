@@ -6,6 +6,37 @@ DB_NAME = "casino.db"
 def connect():
     return sqlite3.connect(DB_NAME)
 
+def get_profile(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT
+            balance,
+            wins,
+            losses,
+            games_played,
+            pushes,
+            blackjacks,
+            doubles,
+            biggest_win,
+            biggest_loss,
+            total_wagered,
+            achievements,
+            title
+        FROM players
+        WHERE user_id = ?
+        """,
+        (str(user_id),)
+    )
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    return row
+
 
 def setup_database():
     conn = connect()
