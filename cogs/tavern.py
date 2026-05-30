@@ -19,6 +19,7 @@ from database import (
     record_blackjack,
     update_biggest_win,
     update_biggest_loss,
+    add_gold,
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
@@ -870,6 +871,45 @@ class Tavern(commands.Cog):
         target = user or interaction.user
         await send_profile(interaction, target)
     
+        @app_commands.command(name="addgold", description="Founder only - add gold to a player")
+    @app_commands.describe(user="Player", amount="Amount of gold to add")
+    async def addgold(self, interaction: discord.Interaction, user: discord.User, amount: int):
+        if interaction.user.id != FOUNDER_ID:
+            await interaction.response.send_message("🚫 Founder only.", ephemeral=True)
+            return
+
+        if amount <= 0:
+            await interaction.response.send_message("Amount must be greater than 0.", ephemeral=True)
+            return
+
+        new_balance = add_gold(user.id, amount)
+
+        await interaction.response.send_message(
+            f"💰 {user.mention} received **{amount:,} gold**.\n"
+            f"New balance: **{new_balance:,} gold**."
+        )
+
+    @app_commands.command(name="removegold", description="Founder only - remove gold from a player")
+    @app_commands.describe(user="Player", amount="Amount of gold to remove")
+    async def removegold(self, interaction: discord.Interaction, user: discord.User, amount: int):
+        if interaction.user.id != FOUNDER_ID:
+            await interaction.response.send_message("🚫 Founder only.", ephemeral=True)
+            return
+
+        if amount <= 0:
+            await interaction.response.send_message("Amount must be greater than 0.", ephemeral=True)
+            return
+
+        new_balance = add_gold(user.id, -amount)
+
+        if new_balance < 0:
+            new_balance = add_gold(user.id, abs(new_balance))
+
+        await interaction.response.send_message(
+            f"💸 Removed **{amount:,} gold** from {user.mention}.\n"
+            f"New balance: **{new_balance:,} gold**."
+        )
+        
     @app_commands.command(name="tavern", description="Open The Tavern menu")
     async def tavern(self, interaction: discord.Interaction):
         if not is_tavern_channel(interaction):
