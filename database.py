@@ -5,6 +5,23 @@ DB_NAME = "data/casino.db"
 def connect():
     return sqlite3.connect(DB_NAME)
 
+def adjust_gold(user_id: int, amount: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        "UPDATE players SET balance = balance + ? WHERE user_id = ?",
+        (amount, str(user_id))
+    )
+
+    conn.commit()
+    conn.close()
+
 def get_profile(user_id: int):
     conn = connect()
     cur = conn.cursor()
