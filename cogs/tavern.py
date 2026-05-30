@@ -871,7 +871,7 @@ class Tavern(commands.Cog):
         target = user or interaction.user
         await send_profile(interaction, target)
     
-        @app_commands.command(name="addgold", description="Founder only - add gold to a player")
+    @app_commands.command(name="addgold", description="Founder only - add gold to a player")
     @app_commands.describe(user="Player", amount="Amount of gold to add")
     async def addgold(self, interaction: discord.Interaction, user: discord.User, amount: int):
         if interaction.user.id != FOUNDER_ID:
