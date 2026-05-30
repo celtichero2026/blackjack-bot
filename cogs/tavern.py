@@ -116,7 +116,12 @@ cclass BlackjackGameView(discord.ui.View):
 
         first_rank = hand[0][0]
         second_rank = hand[1][0]
-
+        
+        ten_value = {"10", "J", "Q", "K"}
+        
+        if first_rank in ten_value and second_rank in ten_value:
+            return True
+        
         return first_rank == second_rank
 
     def build_embed(self, reveal_dealer=False, game_over=False):
