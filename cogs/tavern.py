@@ -20,6 +20,7 @@ from database import (
     update_biggest_win,
     update_biggest_loss,
     add_gold,
+    adjust_gold,
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
