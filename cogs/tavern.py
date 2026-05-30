@@ -74,6 +74,22 @@ class BlackjackGameView(discord.ui.View):
     def current_player_id(self):
         return self.players[self.current_index]
 
+    def current_hand(self):
+        player_id = self.current_player_id()
+        return self.player_hands[player_id]
+
+    def can_split_current_hand(self):
+        player_id = self.current_player_id()
+        hand = self.player_hands[player_id]
+
+        if len(hand) != 2:
+            return False
+
+        first_rank = hand[0][0]
+        second_rank = hand[1][0]
+
+        return first_rank == second_rank
+
     def build_embed(self, reveal_dealer=False, game_over=False):
         description = ""
 
@@ -237,6 +253,37 @@ class BlackjackGameView(discord.ui.View):
         self.player_hands[interaction.user.id].append(self.deck.draw())
 
         await self.advance_turn_or_finish(interaction)
+
+    @discord.ui.button(label="Split", emoji="✂️", style=discord.ButtonStyle.secondary)
+    async def split(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.current_player_id():
+            await interaction.response.send_message(
+                "It is not your turn.",
+                ephemeral=True
+            )
+            return
+
+        if not self.can_split_current_hand():
+            await interaction.response.send_message(
+                "You can only split when your first two cards are the same rank.",
+                ephemeral=True
+            )
+            return
+
+        current_bet = self.player_bets[interaction.user.id]
+        balance = get_balance(interaction.user.id)
+
+        if balance < current_bet * 2:
+            await interaction.response.send_message(
+                "You do not have enough gold to split this hand.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "✂️ Split is allowed. Full split play is next.",
+            ephemeral=True
+        )
 
 
 class BlackjackTableView(discord.ui.View):
