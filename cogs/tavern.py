@@ -50,37 +50,66 @@ def add_achievement_text(player_id, result):
     return result
 
 
-class BlackjackGameView(discord.ui.View):
+cclass BlackjackGameView(discord.ui.View):
     def __init__(self, deck, dealer_hand, player_hands, players, bet):
         super().__init__(timeout=None)
         self.deck = deck
         self.dealer_hand = dealer_hand
-        self.player_hands = player_hands
         self.players = players
-        self.current_index = 0
-
         self.bet = bet
-        
+
+        # Convert each player from one hand into a list of hands
+        self.player_hands = {
+            player_id: [player_hands[player_id]]
+            for player_id in players
+        }
+
         self.player_bets = {
-            player_id: bet
+            player_id: [bet]
             for player_id in players
         }
 
         self.has_acted = {
-            player_id: False
+            player_id: [False]
             for player_id in players
         }
 
+        # Turns are now player + hand number
+        self.turns = [
+            (player_id, 0)
+            for player_id in players
+        ]
+
+        self.current_index = 0
+
+    def current_turn(self):
+        return self.turns[self.current_index]
+
     def current_player_id(self):
-        return self.players[self.current_index]
+        player_id, hand_index = self.current_turn()
+        return player_id
+
+    def current_hand_index(self):
+        player_id, hand_index = self.current_turn()
+        return hand_index
 
     def current_hand(self):
-        player_id = self.current_player_id()
-        return self.player_hands[player_id]
+        player_id, hand_index = self.current_turn()
+        return self.player_hands[player_id][hand_index]
+
+    def current_bet(self):
+        player_id, hand_index = self.current_turn()
+        return self.player_bets[player_id][hand_index]
 
     def can_split_current_hand(self):
-        player_id = self.current_player_id()
-        hand = self.player_hands[player_id]
+        player_id, hand_index = self.current_turn()
+        hand = self.player_hands[player_id][hand_index]
+
+        if hand_index != 0:
+            return False
+
+        if len(self.player_hands[player_id]) > 1:
+            return False
 
         if len(hand) != 2:
             return False
@@ -101,21 +130,34 @@ class BlackjackGameView(discord.ui.View):
             visible = self.dealer_hand[1]
             description += f"**Dealer**\n🂠 {visible[0]}{visible[1]}\n\n"
 
+        current_player, current_hand_index = self.current_turn()
+
         for player_id in self.players:
-            hand = self.player_hands[player_id]
-            cards = format_hand(hand)
-            total = hand_value(hand)
-            bet = self.player_bets[player_id]
+            hands = self.player_hands[player_id]
 
-            marker = ""
-            if not game_over and player_id == self.current_player_id():
-                marker = "⬅️ Current Turn"
+            for hand_index, hand in enumerate(hands):
+                cards = format_hand(hand)
+                total = hand_value(hand)
+                bet = self.player_bets[player_id][hand_index]
 
-            description += (
-                f"**<@{player_id}>** {marker}\n"
-                f"{cards}\n"
-                f"Total: **{total}** | Bet: **{bet:,} gold**\n\n"
-            )
+                marker = ""
+                hand_label = ""
+
+                if len(hands) > 1:
+                    hand_label = f" — Hand {hand_index + 1}"
+
+                if (
+                    not game_over
+                    and player_id == current_player
+                    and hand_index == current_hand_index
+                ):
+                    marker = "⬅️ Current Turn"
+
+                description += (
+                    f"**<@{player_id}>{hand_label}** {marker}\n"
+                    f"{cards}\n"
+                    f"Total: **{total}** | Bet: **{bet:,} gold**\n\n"
+                )
 
         if game_over:
             description += self.finish_game_and_results()
@@ -131,48 +173,50 @@ class BlackjackGameView(discord.ui.View):
         text = "**Results**\n"
 
         for player_id in self.players:
-            player_total = hand_value(self.player_hands[player_id])
-            bet = self.player_bets[player_id]
+            hands = self.player_hands[player_id]
 
-            if player_total > 21:
-                result = f"Bust — lost **{bet:,} gold**"
-                record_game_result(player_id, "loss", -bet)
-                update_biggest_loss(player_id, bet)
+            for hand_index, hand in enumerate(hands):
+                player_total = hand_value(hand)
+                bet = self.player_bets[player_id][hand_index]
+
+                hand_label = ""
+                if len(hands) > 1:
+                    hand_label = f" Hand {hand_index + 1}"
+
+                if player_total > 21:
+                    result = f"{hand_label} bust — lost **{bet:,} gold**"
+                    record_game_result(player_id, "loss", -bet)
+                    update_biggest_loss(player_id, bet)
+
+                elif dealer_total > 21:
+                    result = f"{hand_label} dealer bust — won **{bet:,} gold**"
+                    record_game_result(player_id, "win", bet)
+                    update_biggest_win(player_id, bet)
+
+                elif player_total > dealer_total:
+                    result = f"{hand_label} won **{bet:,} gold**"
+                    record_game_result(player_id, "win", bet)
+                    update_biggest_win(player_id, bet)
+
+                elif player_total < dealer_total:
+                    result = f"{hand_label} lost **{bet:,} gold**"
+                    record_game_result(player_id, "loss", -bet)
+                    update_biggest_loss(player_id, bet)
+
+                else:
+                    result = f"{hand_label} push"
+                    record_game_result(player_id, "push", 0)
+
                 result = add_achievement_text(player_id, result)
-
-            elif dealer_total > 21:
-                result = f"Dealer bust — won **{bet:,} gold**"
-                record_game_result(player_id, "win", bet)
-                update_biggest_win(player_id, bet)
-                result = add_achievement_text(player_id, result)
-
-            elif player_total > dealer_total:
-                result = f"Won **{bet:,} gold**"
-                record_game_result(player_id, "win", bet)
-                update_biggest_win(player_id, bet)
-                result = add_achievement_text(player_id, result)
-
-            elif player_total < dealer_total:
-                result = f"Lost **{bet:,} gold**"
-                record_game_result(player_id, "loss", -bet)
-                update_biggest_loss(player_id, bet)
-                result = add_achievement_text(player_id, result)
-
-            else:
-                result = "Push"
-                record_game_result(player_id, "push", 0)
-                result = add_achievement_text(player_id, result)
-
-            text += f"<@{player_id}>: **{result}**\n"
+                text += f"<@{player_id}>: **{result}**\n"
 
         return text
 
     async def advance_turn_or_finish(self, interaction):
-        while self.current_index < len(self.players) - 1:
+        while self.current_index < len(self.turns) - 1:
             self.current_index += 1
-            current_id = self.current_player_id()
 
-            if hand_value(self.player_hands[current_id]) <= 21:
+            if hand_value(self.current_hand()) <= 21:
                 await interaction.response.edit_message(
                     embed=self.build_embed(),
                     view=self
@@ -196,10 +240,12 @@ class BlackjackGameView(discord.ui.View):
             )
             return
 
-        self.has_acted[interaction.user.id] = True
-        self.player_hands[interaction.user.id].append(self.deck.draw())
+        player_id, hand_index = self.current_turn()
 
-        if hand_value(self.player_hands[interaction.user.id]) > 21:
+        self.has_acted[player_id][hand_index] = True
+        self.player_hands[player_id][hand_index].append(self.deck.draw())
+
+        if hand_value(self.player_hands[player_id][hand_index]) > 21:
             await self.advance_turn_or_finish(interaction)
             return
 
@@ -217,7 +263,9 @@ class BlackjackGameView(discord.ui.View):
             )
             return
 
-        self.has_acted[interaction.user.id] = True
+        player_id, hand_index = self.current_turn()
+        self.has_acted[player_id][hand_index] = True
+
         await self.advance_turn_or_finish(interaction)
 
     @discord.ui.button(label="Double", emoji="💰", style=discord.ButtonStyle.red)
@@ -229,15 +277,17 @@ class BlackjackGameView(discord.ui.View):
             )
             return
 
-        if self.has_acted[interaction.user.id]:
+        player_id, hand_index = self.current_turn()
+
+        if self.has_acted[player_id][hand_index]:
             await interaction.response.send_message(
                 "You can only double before taking another action.",
                 ephemeral=True
             )
             return
 
-        current_bet = self.player_bets[interaction.user.id]
-        balance = get_balance(interaction.user.id)
+        current_bet = self.player_bets[player_id][hand_index]
+        balance = get_balance(player_id)
 
         if balance < current_bet * 2:
             await interaction.response.send_message(
@@ -246,11 +296,11 @@ class BlackjackGameView(discord.ui.View):
             )
             return
 
-        self.player_bets[interaction.user.id] = current_bet * 2
-        record_double(interaction.user.id)
+        self.player_bets[player_id][hand_index] = current_bet * 2
+        record_double(player_id)
 
-        self.has_acted[interaction.user.id] = True
-        self.player_hands[interaction.user.id].append(self.deck.draw())
+        self.has_acted[player_id][hand_index] = True
+        self.player_hands[player_id][hand_index].append(self.deck.draw())
 
         await self.advance_turn_or_finish(interaction)
 
@@ -270,8 +320,9 @@ class BlackjackGameView(discord.ui.View):
             )
             return
 
-        current_bet = self.player_bets[interaction.user.id]
-        balance = get_balance(interaction.user.id)
+        player_id, hand_index = self.current_turn()
+        current_bet = self.player_bets[player_id][hand_index]
+        balance = get_balance(player_id)
 
         if balance < current_bet * 2:
             await interaction.response.send_message(
@@ -280,11 +331,24 @@ class BlackjackGameView(discord.ui.View):
             )
             return
 
-        await interaction.response.send_message(
-            "✂️ Split is allowed. Full split play is next.",
-            ephemeral=True
-        )
+        original_hand = self.player_hands[player_id][0]
 
+        hand_one = [original_hand[0], self.deck.draw()]
+        hand_two = [original_hand[1], self.deck.draw()]
+
+        self.player_hands[player_id] = [hand_one, hand_two]
+        self.player_bets[player_id] = [current_bet, current_bet]
+        self.has_acted[player_id] = [False, False]
+
+        record_wager(player_id, current_bet)
+
+        # Add second split hand right after current hand
+        self.turns.insert(self.current_index + 1, (player_id, 1))
+
+        await interaction.response.edit_message(
+            embed=self.build_embed(),
+            view=self
+        )
 
 class BlackjackTableView(discord.ui.View):
     def __init__(self, host_id, bet):
