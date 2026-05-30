@@ -50,7 +50,7 @@ def add_achievement_text(player_id, result):
     return result
 
 
-cclass BlackjackGameView(discord.ui.View):
+class BlackjackGameView(discord.ui.View):
     def __init__(self, deck, dealer_hand, player_hands, players, bet):
         super().__init__(timeout=None)
         self.deck = deck
