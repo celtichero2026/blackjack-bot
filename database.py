@@ -36,6 +36,32 @@ def get_profile(user_id: int):
     return row
 
 
+def add_gold(user_id, amount):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        "UPDATE players SET balance = balance + ? WHERE user_id = ?",
+        (amount, str(user_id))
+    )
+
+    cur.execute(
+        "SELECT balance FROM players WHERE user_id = ?",
+        (str(user_id),)
+    )
+
+    balance = cur.fetchone()[0]
+
+    conn.commit()
+    conn.close()
+
+    return balance
+
 def setup_database():
     conn = connect()
     cur = conn.cursor()
