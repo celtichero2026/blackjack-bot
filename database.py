@@ -368,3 +368,31 @@ def update_biggest_loss(user_id: int, amount: int):
 
     conn.commit()
     conn.close()
+
+def record_game_stat(user_id: int, result: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    if result == "win":
+        cur.execute(
+            "UPDATE players SET wins = wins + 1, games_played = games_played + 1 WHERE user_id = ?",
+            (str(user_id),)
+        )
+    elif result == "loss":
+        cur.execute(
+            "UPDATE players SET losses = losses + 1, games_played = games_played + 1 WHERE user_id = ?",
+            (str(user_id),)
+        )
+    elif result == "push":
+        cur.execute(
+            "UPDATE players SET pushes = pushes + 1, games_played = games_played + 1 WHERE user_id = ?",
+            (str(user_id),)
+        )
+
+    conn.commit()
+    conn.close()
