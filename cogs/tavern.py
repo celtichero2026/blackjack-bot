@@ -12,6 +12,7 @@ from database import (
     get_leaderboard,
     get_balance,
     record_game_result,
+    record_game_stat,
     get_profile,
     get_player_achievements,
     record_wager,
@@ -19,8 +20,8 @@ from database import (
     record_blackjack,
     update_biggest_win,
     update_biggest_loss,
-    add_gold,
     adjust_gold,
+    add_gold,
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
@@ -60,7 +61,6 @@ class BlackjackGameView(discord.ui.View):
         self.players = players
         self.bet = bet
 
-        # Convert each player from one hand into a list of hands
         self.player_hands = {
             player_id: [player_hands[player_id]]
             for player_id in players
@@ -76,7 +76,6 @@ class BlackjackGameView(discord.ui.View):
             for player_id in players
         }
 
-        # Turns are now player + hand number
         self.turns = [
             (player_id, 0)
             for player_id in players
@@ -91,17 +90,9 @@ class BlackjackGameView(discord.ui.View):
         player_id, hand_index = self.current_turn()
         return player_id
 
-    def current_hand_index(self):
-        player_id, hand_index = self.current_turn()
-        return hand_index
-
     def current_hand(self):
         player_id, hand_index = self.current_turn()
         return self.player_hands[player_id][hand_index]
-
-    def current_bet(self):
-        player_id, hand_index = self.current_turn()
-        return self.player_bets[player_id][hand_index]
 
     def can_split_current_hand(self):
         player_id, hand_index = self.current_turn()
@@ -118,12 +109,12 @@ class BlackjackGameView(discord.ui.View):
 
         first_rank = hand[0][0]
         second_rank = hand[1][0]
-        
+
         ten_value = {"10", "J", "Q", "K"}
-        
+
         if first_rank in ten_value and second_rank in ten_value:
             return True
-        
+
         return first_rank == second_rank
 
     def build_embed(self, reveal_dealer=False, game_over=False):
@@ -178,6 +169,7 @@ class BlackjackGameView(discord.ui.View):
     def finish_game_and_results(self):
         dealer_total = hand_value(self.dealer_hand)
         text = "**Results**\n"
+        achievement_checked = set()
 
         for player_id in self.players:
             hands = self.player_hands[player_id]
@@ -192,29 +184,37 @@ class BlackjackGameView(discord.ui.View):
 
                 if player_total > 21:
                     result = f"{hand_label} bust — lost **{bet:,} gold**"
-                    record_game_result(player_id, "loss", -bet)
+                    record_game_stat(player_id, "loss")
                     update_biggest_loss(player_id, bet)
 
                 elif dealer_total > 21:
+                    payout = bet * 2
+                    adjust_gold(player_id, payout)
                     result = f"{hand_label} dealer bust — won **{bet:,} gold**"
-                    record_game_result(player_id, "win", bet)
+                    record_game_stat(player_id, "win")
                     update_biggest_win(player_id, bet)
 
                 elif player_total > dealer_total:
+                    payout = bet * 2
+                    adjust_gold(player_id, payout)
                     result = f"{hand_label} won **{bet:,} gold**"
-                    record_game_result(player_id, "win", bet)
+                    record_game_stat(player_id, "win")
                     update_biggest_win(player_id, bet)
 
                 elif player_total < dealer_total:
                     result = f"{hand_label} lost **{bet:,} gold**"
-                    record_game_result(player_id, "loss", -bet)
+                    record_game_stat(player_id, "loss")
                     update_biggest_loss(player_id, bet)
 
                 else:
+                    adjust_gold(player_id, bet)
                     result = f"{hand_label} push"
-                    record_game_result(player_id, "push", 0)
+                    record_game_stat(player_id, "push")
 
-                result = add_achievement_text(player_id, result)
+                if player_id not in achievement_checked:
+                    result = add_achievement_text(player_id, result)
+                    achievement_checked.add(player_id)
+
                 text += f"<@{player_id}>: **{result}**\n"
 
         return text
@@ -296,12 +296,15 @@ class BlackjackGameView(discord.ui.View):
         current_bet = self.player_bets[player_id][hand_index]
         balance = get_balance(player_id)
 
-        if balance < current_bet * 2:
+        if balance < current_bet:
             await interaction.response.send_message(
                 "You do not have enough gold to double down.",
                 ephemeral=True
             )
             return
+
+        adjust_gold(player_id, -current_bet)
+        record_wager(player_id, current_bet)
 
         self.player_bets[player_id][hand_index] = current_bet * 2
         record_double(player_id)
@@ -331,12 +334,15 @@ class BlackjackGameView(discord.ui.View):
         current_bet = self.player_bets[player_id][hand_index]
         balance = get_balance(player_id)
 
-        if balance < current_bet * 2:
+        if balance < current_bet:
             await interaction.response.send_message(
                 "You do not have enough gold to split this hand.",
                 ephemeral=True
             )
             return
+
+        adjust_gold(player_id, -current_bet)
+        record_wager(player_id, current_bet)
 
         original_hand = self.player_hands[player_id][0]
 
@@ -347,15 +353,13 @@ class BlackjackGameView(discord.ui.View):
         self.player_bets[player_id] = [current_bet, current_bet]
         self.has_acted[player_id] = [False, False]
 
-        record_wager(player_id, current_bet)
-
-        # Add second split hand right after current hand
         self.turns.insert(self.current_index + 1, (player_id, 1))
 
         await interaction.response.edit_message(
             embed=self.build_embed(),
             view=self
         )
+
 
 class BlackjackTableView(discord.ui.View):
     def __init__(self, host_id, bet):
@@ -435,8 +439,10 @@ class BlackjackTableView(discord.ui.View):
         player_hands = {}
 
         for player_id in self.players:
-            player_hands[player_id] = [deck.draw(), deck.draw()]
+            adjust_gold(player_id, -self.bet)
             record_wager(player_id, self.bet)
+
+            player_hands[player_id] = [deck.draw(), deck.draw()]
 
             if len(player_hands[player_id]) == 2 and hand_value(player_hands[player_id]) == 21:
                 record_blackjack(player_id)
@@ -639,6 +645,7 @@ class DiceTableView(discord.ui.View):
 
         await interaction.response.edit_message(embed=embed, view=None)
 
+
 class BetModal(discord.ui.Modal):
     def __init__(self, game_type):
         super().__init__(title=f"Create {game_type} Table")
@@ -697,6 +704,7 @@ class BetModal(discord.ui.Modal):
                 view=table_view
             )
 
+
 class TavernView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -732,11 +740,10 @@ class TavernView(discord.ui.View):
     async def profile_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await send_profile(interaction, interaction.user)
 
-
     @discord.ui.button(label="Blackjack", emoji="🃏", style=discord.ButtonStyle.red)
     async def blackjack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BetModal("Blackjack"))
-      
+
     @discord.ui.button(label="Dice", emoji="🎲", style=discord.ButtonStyle.green)
     async def dice_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BetModal("Dice"))
@@ -768,6 +775,7 @@ class TavernView(discord.ui.View):
             embed=embed,
             ephemeral=True
         )
+
 
 async def send_profile(interaction, target_user):
     profile = get_profile(target_user.id)
@@ -856,22 +864,11 @@ async def send_profile(interaction, target_user):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+
 class Tavern(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @app_commands.command(name="profile", description="View a Tavern profile")
-    @app_commands.describe(user="Player to view")
-    async def profile(self, interaction: discord.Interaction, user: Optional[discord.User] = None):
-        if not is_tavern_channel(interaction):
-            await interaction.response.send_message(
-                "🍺 TrophyBot only runs in **The Tavern**.",
-                ephemeral=True
-            )
-            return
 
-        target = user or interaction.user
-        await send_profile(interaction, target)
-    
     @app_commands.command(name="addgold", description="Founder only - add gold to a player")
     @app_commands.describe(user="Player", amount="Amount of gold to add")
     async def addgold(self, interaction: discord.Interaction, user: discord.User, amount: int):
@@ -910,7 +907,20 @@ class Tavern(commands.Cog):
             f"💸 Removed **{amount:,} gold** from {user.mention}.\n"
             f"New balance: **{new_balance:,} gold**."
         )
-        
+
+    @app_commands.command(name="profile", description="View a Tavern profile")
+    @app_commands.describe(user="Player to view")
+    async def profile(self, interaction: discord.Interaction, user: Optional[discord.User] = None):
+        if not is_tavern_channel(interaction):
+            await interaction.response.send_message(
+                "🍺 TrophyBot only runs in **The Tavern**.",
+                ephemeral=True
+            )
+            return
+
+        target = user or interaction.user
+        await send_profile(interaction, target)
+
     @app_commands.command(name="tavern", description="Open The Tavern menu")
     async def tavern(self, interaction: discord.Interaction):
         if not is_tavern_channel(interaction):
