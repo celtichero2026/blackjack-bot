@@ -23,6 +23,8 @@ def check_achievements(user_id: int):
         biggest_loss,
         total_wagered,
         title,
+        xp,
+        *_rest
     ) = profile
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
