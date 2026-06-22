@@ -861,23 +861,9 @@ class TavernView(discord.ui.View):
         )
     @discord.ui.button(label="Shop", emoji="🏪", style=discord.ButtonStyle.gray)
     async def shop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
-            title="🏪 The Tavern Shop",
-            description=(
-                "Spend your questionable winnings on things you probably do not need.\n\n"
-                "**Categories:**\n"
-                "🎭 Mischief\n"
-                "🏅 Titles\n"
-                "📦 Sticker Packs\n"
-                "🔊 Sounds"
-            ),
-            color=discord.Color.gold()
-        )
-
-        embed.set_footer(text="No refunds. The Tavern is not responsible for poor decisions.")
-
+        
         await interaction.response.send_message(
-            embed=build_shop_embed(),
+            embed=build_shop_embed(interaction.user.id),
             view=ShopView(interaction.user.id),
             ephemeral=True
         )
@@ -1005,23 +991,32 @@ async def send_profile(interaction, target_user):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-def build_shop_embed():
+def build_shop_embed(user_id):
+    balance = get_balance(user_id)
+
+    profile = get_profile(user_id)
+
+    active_title = "🍺 Tavern Newbie"
+
+    if profile:
+        active_title = profile[10]
+
     embed = discord.Embed(
         title="🏪 The Tavern Shop",
         description=(
-            "Spend your questionable winnings on things you probably do not need.\n\n"
-            "**Categories:**\n"
-            "🎭 Mischief\n"
-            "🎖 Titles\n"
-            "📦 Sticker Packs\n"
-            "🔊 Sounds"
+            f"💰 Gold: **{balance:,}**\n\n"
+            f"🎖 Active Title:\n"
+            f"{active_title}\n\n"
+            "Spend your questionable winnings on things you probably do not need."
         ),
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="No refunds. The Tavern is not responsible for poor decisions.")
-    return embed
+    embed.set_footer(
+        text="No refunds. The Tavern is not responsible for poor decisions."
+    )
 
+    return embed
 
 def build_titles_embed():
     embed = discord.Embed(
@@ -1104,19 +1099,21 @@ class ShopView(discord.ui.View):
             view=ShopBackView(self.owner_id)
         )
 
-    @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
-    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(
-            content=None,
-            embed=build_shop_embed(),
-            view=ShopView(self.owner_id)
-        )
+ 
 
 
 class ShopBackView(discord.ui.View):
     def __init__(self, owner_id):
         super().__init__(timeout=180)
         self.owner_id = owner_id
+
+    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(self.owner_id),
+            view=ShopView(self.owner_id)
+        )
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.owner_id:
@@ -1161,7 +1158,7 @@ class TitleShopView(discord.ui.View):
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             content=None,
-            embed=build_shop_embed(),
+            embed=build_shop_embed(self.owner_id),
             view=ShopView(self.owner_id)
         )
         
@@ -1231,23 +1228,9 @@ class Tavern(commands.Cog):
             )
             return
 
-        embed = discord.Embed(
-            title="🏪 The Tavern Shop",
-            description=(
-                "Spend your questionable winnings on things you probably do not need.\n\n"
-                "**Categories:**\n"
-                "🎭 Mischief\n"
-                "🎖 Titles\n"
-                "📦 Sticker Packs\n"
-                "🔊 Sounds"
-            ),
-            color=discord.Color.gold()
-        )
-
-        embed.set_footer(text="No refunds. The Tavern is not responsible for poor decisions.")
 
         await interaction.response.send_message(
-            embed=build_shop_embed(),
+            embed=build_shop_embed(interaction.user.id),
             view=ShopView(interaction.user.id),
             ephemeral=True
         )
