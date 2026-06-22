@@ -1,5 +1,6 @@
 import discord
 import random
+import os
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timezone
@@ -69,7 +70,7 @@ TITLE_ITEMS = {
 
 
 
-CONFETTI_DUD_GIF = "https://tenor.com/view/confetti-celebrate-colorful-celebration-gif-15816997"
+CONFETTI_DUD_GIF = os.getenv("CONFETTI_DUD_GIF", "").strip()
 
 MISCHIEF_ITEMS = {
     "rotten_tomato": {
