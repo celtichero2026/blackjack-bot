@@ -40,6 +40,7 @@ def get_profile(user_id: int):
             biggest_loss,
             total_wagered,
             title
+            xp
         FROM players
         WHERE user_id = ?
         """,
@@ -397,3 +398,42 @@ def record_game_stat(user_id: int, result: str):
 
     conn.commit()
     conn.close()
+
+def add_xp(user_id: int, amount: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        "UPDATE players SET xp = xp + ? WHERE user_id = ?",
+        (amount, str(user_id))
+    )
+
+    cur.execute(
+        "SELECT xp FROM players WHERE user_id = ?",
+        (str(user_id),)
+    )
+
+    xp = cur.fetchone()[0]
+
+    conn.commit()
+    conn.close()
+
+    return xp
+
+
+def get_level_info(xp: int):
+    level = 1
+    xp_remaining = xp
+
+    while xp_remaining >= level * 100:
+        xp_remaining -= level * 100
+        level += 1
+
+    xp_needed = level * 100
+
+    return level, xp_remaining, xp_needed
