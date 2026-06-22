@@ -85,7 +85,7 @@ class BlackjackGameView(discord.ui.View):
 
         self.current_index = 0
 
-     async def on_error(self, interaction, error, item):
+    async def on_error(self, interaction, error, item):
         import traceback
         traceback.print_exception(type(error), error, error.__traceback__)
 
@@ -93,7 +93,7 @@ class BlackjackGameView(discord.ui.View):
             await interaction.response.send_message(
                 f"Blackjack error: `{error}`",
                 ephemeral=True
-            )   
+            )
 
     def current_turn(self):
         return self.turns[self.current_index]
@@ -391,6 +391,12 @@ class BlackjackTableView(discord.ui.View):
         import traceback
         traceback.print_exception(type(error), error, error.__traceback__)
 
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"Blackjack table error: `{error}`",
+                ephemeral=True
+            )
+
     def build_table_embed(self):
         player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
 
@@ -487,18 +493,14 @@ class DiceTableView(discord.ui.View):
         self.bet = bet
 
     async def on_error(self, interaction, error, item):
-    import traceback
-    traceback.print_exception(type(error), error, error.__traceback__)
-
-    if not interaction.response.is_done():
-        await interaction.response.send_message(
-            f"Blackjack error: `{error}`",
-            ephemeral=True
-        )
-
-    async def on_error(self, interaction, error, item):
         import traceback
         traceback.print_exception(type(error), error, error.__traceback__)
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"Dice error: `{error}`",
+                ephemeral=True
+            )
 
     def build_table_embed(self):
         player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
