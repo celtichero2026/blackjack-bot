@@ -677,6 +677,8 @@ def get_inventory_by_type(user_id: int, item_type: str):
 
     return rows
 
+
+
 def record_mischief_hit(attacker_id: int, target_id: int, item_id: str):
     conn = connect()
     cur = conn.cursor()
@@ -764,4 +766,3 @@ def get_mischief_stats(user_id: int):
         return 0, 0, 0, 0
 
     return row
-
