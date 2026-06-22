@@ -306,7 +306,7 @@ class BlackjackGameView(discord.ui.View):
 
         await interaction.response.edit_message(
             embed=self.build_embed(reveal_dealer=True, game_over=True),
-            view=None
+            view=PlayAgainView("Blackjack")
         )
 
         await send_level_up_messages(interaction, self.level_ups)
@@ -766,9 +766,20 @@ class DiceTableView(discord.ui.View):
             color=discord.Color.dark_gold()
         )
 
-        await interaction.response.edit_message(embed=embed, view=None)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=PlayAgainView("Dice")
+        )
         await send_level_up_messages(interaction, level_ups)
 
+class PlayAgainView(discord.ui.View):
+    def __init__(self, game_type):
+        super().__init__(timeout=180)
+        self.game_type = game_type
+
+    @discord.ui.button(label="Play Again", emoji="🔁", style=discord.ButtonStyle.green)
+    async def play_again_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BetModal(self.game_type))
 
 class BetModal(discord.ui.Modal):
     def __init__(self, game_type):
