@@ -261,7 +261,7 @@ def build_mystery_box_embed(attacker, target):
         color=discord.Color.light_grey()
     )
 
-    if CONFETTI_DUD_GIF != "PUT_YOUR_CONFETTI_GIF_URL_HERE":
+    if CONFETTI_DUD_GIF:
         embed.set_image(url=CONFETTI_DUD_GIF)
 
     return embed
@@ -1143,7 +1143,7 @@ class TavernView(discord.ui.View):
         )
 
 
-async def send_profile(interaction, target_user):
+def build_profile_embed(target_user):
     profile = get_profile(target_user.id)
 
     if profile is None:
@@ -1173,19 +1173,22 @@ async def send_profile(interaction, target_user):
         win_rate = (wins / games_played) * 100
 
     earned_achievements = get_player_achievements(target_user.id)
+    recent_achievements = list(reversed(earned_achievements))[:5]
 
-    if earned_achievements:
+    if recent_achievements:
         achievement_text = "\n".join(
             [
                 ACHIEVEMENTS.get(
                     achievement_id,
                     {"name": achievement_id}
                 )["name"]
-                for achievement_id, date_earned in earned_achievements[:10]
+                for achievement_id, date_earned in recent_achievements
             ]
         )
     else:
         achievement_text = "No achievements yet. Go make questionable choices."
+
+    tomatoes_thrown, tomatoes_taken, pies_thrown, pies_taken = get_mischief_stats(target_user.id)
 
     embed = discord.Embed(
         title=f"👤 {target_user.display_name}'s Tavern Profile",
@@ -1217,8 +1220,6 @@ async def send_profile(interaction, target_user):
         inline=True
     )
 
-    tomatoes_thrown, tomatoes_taken, pies_thrown, pies_taken = get_mischief_stats(target_user.id)
-
     embed.add_field(
         name="🎭 Mischief",
         value=(
@@ -1229,12 +1230,303 @@ async def send_profile(interaction, target_user):
     )
 
     embed.add_field(
-        name="🎖 Achievements",
+        name="🎖 Recent Achievements",
         value=achievement_text,
         inline=False
     )
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    embed.set_footer(text="Use the buttons below for more profile pages.")
+    return embed
+
+
+async def send_profile(interaction, target_user):
+    await interaction.response.send_message(
+        embed=build_profile_embed(target_user),
+        view=ProfileView(interaction.user.id, target_user),
+        ephemeral=True
+    )
+
+
+def build_inventory_embed(target_user):
+    title_ids = get_player_titles(target_user.id)
+    title_lines = [DEFAULT_TITLE]
+
+    for title_id in title_ids:
+        title = TITLE_ITEMS.get(title_id)
+        if title:
+            title_lines.append(title["name"])
+
+    mischief_items = get_owned_mischief_items(target_user.id)
+
+    if mischief_items:
+        mischief_lines = []
+        for item_id, quantity in mischief_items:
+            item = MISCHIEF_ITEMS.get(item_id)
+            if item:
+                mischief_lines.append(f"{item['name']} x{quantity}")
+        mischief_text = "\n".join(mischief_lines)
+    else:
+        mischief_text = "No mischief items owned."
+
+    embed = discord.Embed(
+        title=f"🎒 {target_user.display_name}'s Inventory",
+        description="Inventory is only visible on your own profile.",
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="🎖 Titles",
+        value="\n".join(title_lines),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎭 Consumables",
+        value=mischief_text,
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔊 Sounds",
+        value="Coming soon.",
+        inline=False
+    )
+
+    return embed
+
+
+def build_sticker_book_embed(target_user):
+    embed = discord.Embed(
+        title=f"📖 {target_user.display_name}'s Sticker Book",
+        description=(
+            "Sticker book is coming soon.\n\n"
+            "Eventually this page can show collected stickers, missing stickers, "
+            "and set completion."
+        ),
+        color=discord.Color.gold()
+    )
+
+    return embed
+
+
+def build_detailed_stats_embed(target_user):
+    profile = get_profile(target_user.id)
+
+    if profile is None:
+        get_or_create_player(target_user.id)
+        profile = get_profile(target_user.id)
+
+    (
+        balance,
+        wins,
+        losses,
+        games_played,
+        pushes,
+        blackjacks,
+        doubles,
+        biggest_win,
+        biggest_loss,
+        total_wagered,
+        title,
+        xp
+    ) = profile
+
+    level, xp_current, xp_needed = get_level_info(xp)
+
+    win_rate = 0
+    if games_played > 0:
+        win_rate = (wins / games_played) * 100
+
+    tomatoes_thrown, tomatoes_taken, pies_thrown, pies_taken = get_mischief_stats(target_user.id)
+
+    embed = discord.Embed(
+        title=f"📊 {target_user.display_name}'s Detailed Stats",
+        description=f"**Title:** {title}",
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="💰 Economy",
+        value=(
+            f"Gold: **{balance:,}**\n"
+            f"Total Wagered: **{total_wagered:,}**\n"
+            f"Biggest Win: **{biggest_win:,}**\n"
+            f"Biggest Loss: **{biggest_loss:,}**"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎮 Games",
+        value=(
+            f"Games Played: **{games_played:,}**\n"
+            f"Wins: **{wins:,}**\n"
+            f"Losses: **{losses:,}**\n"
+            f"Pushes: **{pushes:,}**\n"
+            f"Win Rate: **{win_rate:.1f}%**"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🃏 Blackjack",
+        value=(
+            f"Blackjacks: **{blackjacks:,}**\n"
+            f"Doubles: **{doubles:,}**"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="⭐ Progress",
+        value=(
+            f"Level: **{level}**\n"
+            f"Current XP: **{xp_current}/{xp_needed}**\n"
+            f"Total XP: **{xp:,}**"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎭 Mischief",
+        value=(
+            f"🍅 Tomatoes Thrown: **{tomatoes_thrown:,}**\n"
+            f"🍅 Tomatoes Taken: **{tomatoes_taken:,}**\n"
+            f"🥧 Pies Thrown: **{pies_thrown:,}**\n"
+            f"🥧 Pies Taken: **{pies_taken:,}**"
+        ),
+        inline=False
+    )
+
+    return embed
+
+
+def build_achievements_embed(target_user):
+    earned_rows = get_player_achievements(target_user.id)
+    earned_ids = {achievement_id for achievement_id, date_earned in earned_rows}
+
+    earned_lines = []
+    locked_lines = []
+
+    for achievement_id, achievement in ACHIEVEMENTS.items():
+        name = achievement["name"]
+        description = achievement.get("description", "")
+
+        if achievement_id in earned_ids:
+            earned_lines.append(f"✅ {name} — {description}")
+        else:
+            locked_lines.append(f"🔒 {name} — {description}")
+
+    earned_text = "\n".join(earned_lines) if earned_lines else "No achievements earned yet."
+    locked_text = "\n".join(locked_lines) if locked_lines else "All achievements unlocked."
+
+    if len(earned_text) > 1000:
+        earned_text = earned_text[:997] + "..."
+
+    if len(locked_text) > 1000:
+        locked_text = locked_text[:997] + "..."
+
+    embed = discord.Embed(
+        title=f"🏆 {target_user.display_name}'s Achievements",
+        description=f"Earned **{len(earned_ids)} / {len(ACHIEVEMENTS)}** achievements.",
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="✅ Earned",
+        value=earned_text,
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔒 Locked",
+        value=locked_text,
+        inline=False
+    )
+
+    return embed
+
+
+class ProfileView(discord.ui.View):
+    def __init__(self, owner_id, target_user):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.target_user = target_user
+
+        if owner_id != target_user.id:
+            for item in list(self.children):
+                if getattr(item, "custom_id", None) == "profile_inventory_button":
+                    self.remove_item(item)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This profile menu belongs to someone else. Use `/profile` to open your own view.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Inventory", emoji="🎒", style=discord.ButtonStyle.green, custom_id="profile_inventory_button")
+    async def inventory_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.owner_id != self.target_user.id:
+            await interaction.response.send_message(
+                "You can only view your own inventory.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.edit_message(
+            embed=build_inventory_embed(self.target_user),
+            view=ProfileBackView(self.owner_id, self.target_user)
+        )
+
+    @discord.ui.button(label="Sticker Book", emoji="📖", style=discord.ButtonStyle.blurple)
+    async def sticker_book_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_book_embed(self.target_user),
+            view=ProfileBackView(self.owner_id, self.target_user)
+        )
+
+    @discord.ui.button(label="Detailed Stats", emoji="📊", style=discord.ButtonStyle.gray)
+    async def detailed_stats_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_detailed_stats_embed(self.target_user),
+            view=ProfileBackView(self.owner_id, self.target_user)
+        )
+
+    @discord.ui.button(label="Achievements", emoji="🏆", style=discord.ButtonStyle.secondary)
+    async def achievements_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_achievements_embed(self.target_user),
+            view=ProfileBackView(self.owner_id, self.target_user)
+        )
+
+
+class ProfileBackView(discord.ui.View):
+    def __init__(self, owner_id, target_user):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.target_user = target_user
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This profile menu belongs to someone else. Use `/profile` to open your own view.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Back to Profile", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_profile_embed(self.target_user),
+            view=ProfileView(self.owner_id, self.target_user)
+        )
+
 
 def build_shop_embed(user_id):
     balance = get_balance(user_id)
