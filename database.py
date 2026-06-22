@@ -409,21 +409,35 @@ def add_xp(user_id: int, amount: int):
     )
 
     cur.execute(
-        "UPDATE players SET xp = xp + ? WHERE user_id = ?",
-        (amount, str(user_id))
-    )
-
-    cur.execute(
         "SELECT xp FROM players WHERE user_id = ?",
         (str(user_id),)
     )
 
-    xp = cur.fetchone()[0]
+    old_xp = cur.fetchone()[0]
+
+    old_level, old_current, old_needed = get_level_info(old_xp)
+
+    new_xp = old_xp + amount
+    new_level, new_current, new_needed = get_level_info(new_xp)
+
+    cur.execute(
+        "UPDATE players SET xp = ? WHERE user_id = ?",
+        (new_xp, str(user_id))
+    )
 
     conn.commit()
     conn.close()
 
-    return xp
+    return {
+        "xp_gained": amount,
+        "old_xp": old_xp,
+        "new_xp": new_xp,
+        "old_level": old_level,
+        "new_level": new_level,
+        "level_up": new_level > old_level,
+        "xp_current": new_current,
+        "xp_needed": new_needed,
+    }
 
 
 def get_level_info(xp: int):
