@@ -122,7 +122,18 @@ def setup_database():
             PRIMARY KEY (user_id, achievement_id)
         )
     """)
-
+    
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS player_inventory (
+            user_id TEXT,
+            item_id TEXT,
+            item_type TEXT,
+            quantity INTEGER DEFAULT 1,
+            date_acquired TEXT,
+            PRIMARY KEY (user_id, item_id)
+        )
+    """)
+    
     conn.commit()
     conn.close()
 
@@ -451,3 +462,86 @@ def get_level_info(xp: int):
     xp_needed = level * 100
 
     return level, xp_remaining, xp_needed
+
+def add_inventory_item(user_id: int, item_id: str, item_type: str, date_acquired: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_inventory
+        (user_id, item_id, item_type, quantity, date_acquired)
+        VALUES (?, ?, ?, 1, ?)
+        """,
+        (str(user_id), item_id, item_type, date_acquired)
+    )
+
+    added = cur.rowcount > 0
+
+    conn.commit()
+    conn.close()
+
+    return added
+
+
+def player_owns_item(user_id: int, item_id: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT 1
+        FROM player_inventory
+        WHERE user_id = ? AND item_id = ?
+        """,
+        (str(user_id), item_id)
+    )
+
+    owns = cur.fetchone() is not None
+
+    conn.close()
+
+    return owns
+
+
+def get_player_titles(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT item_id
+        FROM player_inventory
+        WHERE user_id = ? AND item_type = 'title'
+        ORDER BY date_acquired ASC
+        """,
+        (str(user_id),)
+    )
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return [row[0] for row in rows]
+
+
+def set_player_title(user_id: int, title: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        """
+        UPDATE players
+        SET title = ?
+        WHERE user_id = ?
+        """,
+        (title, str(user_id))
+    )
+
+    conn.commit()
+    conn.close()
