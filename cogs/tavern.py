@@ -76,6 +76,7 @@ TITLE_ITEMS = {
 
 
 CONFETTI_DUD_GIF = os.getenv("CONFETTI_DUD_GIF", "").strip()
+STICKER_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/stickers"
 
 MISCHIEF_ITEMS = {
     "rotten_tomato": {
@@ -122,6 +123,7 @@ STICKERS = {
         "rarity": "common",
         "collection": "welcome",
         "quote": "Everyone starts somewhere. Usually broke.",
+        "file": "tavern_newbie.png",
     },
     "welcome_daily_gold": {
         "name": "💰 Daily Gold",
@@ -409,6 +411,21 @@ STICKER_PACKS = {
         },
     },
 }
+
+def get_sticker_image_url(sticker_id):
+    sticker = STICKERS.get(sticker_id)
+
+    if not sticker:
+        return None
+
+    file_name = sticker.get("file")
+
+    if not file_name:
+        return None
+
+    collection_id = sticker["collection"]
+
+    return f"{STICKER_ASSET_BASE_URL}/{collection_id}/{file_name}"
 
 def is_tavern_channel(interaction):
     return interaction.channel_id == TAVERN_CHANNEL_ID
@@ -1762,6 +1779,12 @@ def build_sticker_book_embed(target_user):
         inline=False
     )
 
+    if featured_id:
+        image_url = get_sticker_image_url(featured_id)
+    
+        if image_url:
+            embed.set_image(url=image_url)
+    
     embed.set_footer(text="Choose a collection below to flip through the sticker pages.")
     return embed
 
@@ -1812,6 +1835,11 @@ def build_sticker_collection_embed(target_user, collection_id, page_index):
         color=discord.Color.gold()
     )
 
+    image_url = get_sticker_image_url(sticker_id)
+    
+    if owned and image_url:
+        embed.set_image(url=image_url)
+    
     embed.set_footer(text="Flip pages to browse the collection.")
     return embed
 
