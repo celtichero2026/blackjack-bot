@@ -857,7 +857,8 @@ async def send_profile(interaction, target_user):
         name="⭐ Progress",
         value=(
             f"Level: **{level}**\n"
-            f"XP: **{xp_current}/{xp_needed}**"
+            f"XP: **{xp_current}/{xp_needed}**\n"
+            f"Total XP: **{xp:,}**"
         ),
         inline=True
     )
