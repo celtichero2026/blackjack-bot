@@ -877,8 +877,8 @@ class TavernView(discord.ui.View):
         embed.set_footer(text="No refunds. The Tavern is not responsible for poor decisions.")
 
         await interaction.response.send_message(
-            embed=embed,
-            view=ShopView(),
+            embed=build_shop_embed(),
+            view=ShopView(interaction.user.id),
             ephemeral=True
         )
         
@@ -1005,43 +1005,173 @@ async def send_profile(interaction, target_user):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+def build_shop_embed():
+    embed = discord.Embed(
+        title="🏪 The Tavern Shop",
+        description=(
+            "Spend your questionable winnings on things you probably do not need.\n\n"
+            "**Categories:**\n"
+            "🎭 Mischief\n"
+            "🎖 Titles\n"
+            "📦 Sticker Packs\n"
+            "🔊 Sounds"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="No refunds. The Tavern is not responsible for poor decisions.")
+    return embed
+
+
+def build_titles_embed():
+    embed = discord.Embed(
+        title="🎖 Title Shop",
+        description=(
+            "**Current Title:**\n"
+            "🍺 Tavern Newbie\n\n"
+            "**Owned Titles:**\n"
+            "🍺 Tavern Newbie\n\n"
+            "**Available Titles:**\n"
+            "💰 Gold Hoarder — 5,000 gold\n"
+            "🎲 Dice Goblin — 10,000 gold\n"
+            "🃏 Card Shark — 25,000 gold\n"
+            "🎖 High Roller — 50,000 gold\n"
+            "👑 Tavern Royalty — 100,000 gold"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Buy and equip buttons coming next.")
+    return embed
+
+
 class ShopView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This shop menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
 
     @discord.ui.button(label="Mischief", emoji="🎭", style=discord.ButtonStyle.red)
     async def mischief_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "🎭 **Mischief Shop** coming soon.\nRotten tomatoes, cream pies, lucky shields, and other bad decisions.",
-            ephemeral=True
+        await interaction.response.edit_message(
+            content=None,
+            embed=discord.Embed(
+                title="🎭 Mischief Shop",
+                description="Coming soon: tomatoes, cream pies, lucky shields, and other bad decisions.",
+                color=discord.Color.gold()
+            ),
+            view=ShopBackView(self.owner_id)
         )
 
     @discord.ui.button(label="Titles", emoji="🎖", style=discord.ButtonStyle.blurple)
     async def titles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "🎖 **Title Shop** coming soon.",
-            ephemeral=True
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_titles_embed(),
+            view=TitleShopView(self.owner_id)
         )
 
     @discord.ui.button(label="Sticker Packs", emoji="📦", style=discord.ButtonStyle.green)
     async def sticker_packs_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "📦 **Sticker Packs** coming soon.",
-            ephemeral=True
+        await interaction.response.edit_message(
+            content=None,
+            embed=discord.Embed(
+                title="📦 Sticker Packs",
+                description="Sticker packs are coming soon.",
+                color=discord.Color.gold()
+            ),
+            view=ShopBackView(self.owner_id)
         )
 
     @discord.ui.button(label="Sounds", emoji="🔊", style=discord.ButtonStyle.gray)
     async def sounds_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "🔊 **Sound Shop** coming soon.",
-            ephemeral=True
+        await interaction.response.edit_message(
+            content=None,
+            embed=discord.Embed(
+                title="🔊 Sound Shop",
+                description="Sound collection is coming soon.",
+                color=discord.Color.gold()
+            ),
+            view=ShopBackView(self.owner_id)
         )
 
     @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(),
+            view=ShopView(self.owner_id)
+        )
+
+
+class ShopBackView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This shop menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(),
+            view=ShopView(self.owner_id)
+        )
+
+
+class TitleShopView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This title menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Buy Title", emoji="💰", style=discord.ButtonStyle.green)
+    async def buy_title_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
-            "🍺 Use `/tavern` to return to The Tavern menu.",
+            "💰 Buying titles is coming next.",
             ephemeral=True
+        )
+
+    @discord.ui.button(label="Equip Title", emoji="🎖", style=discord.ButtonStyle.blurple)
+    async def equip_title_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🎖 Equipping titles is coming next.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(),
+            view=ShopView(self.owner_id)
         )
         
 
@@ -1126,8 +1256,9 @@ class Tavern(commands.Cog):
         embed.set_footer(text="No refunds. The Tavern is not responsible for poor decisions.")
 
         await interaction.response.send_message(
-            embed=embed,
-            view=ShopView()
+            embed=build_shop_embed(),
+            view=ShopView(interaction.user.id),
+            ephemeral=True
         )
 
     @app_commands.command(name="tavern", description="Open The Tavern menu")
