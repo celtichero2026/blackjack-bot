@@ -43,6 +43,16 @@ def format_hand(hand):
     return " ".join([f"{card[0]}{card[1]}" for card in hand])
 
 
+def progress_bar(current, needed, size=10):
+    if needed <= 0:
+        return "▰" * size
+
+    filled = int((current / needed) * size)
+    filled = max(0, min(size, filled))
+
+    return "▰" * filled + "▱" * (size - filled)
+
+
 def add_achievement_text(player_id, result):
     new_achievements = check_achievements(player_id)
 
@@ -54,30 +64,34 @@ def add_achievement_text(player_id, result):
 
     return result
 
+
 def xp_result_text(xp_info):
     if not xp_info:
         return ""
 
+    bar = progress_bar(xp_info["xp_current"], xp_info["xp_needed"])
+
     return (
-        f"\n⭐ XP Gained: **+{xp_info['xp_gained']}**"
-        f"\nLevel Progress: **{xp_info['xp_current']}/{xp_info['xp_needed']} XP**"
+        f"\n⭐ **+{xp_info['xp_gained']} XP**"
+        f"\n{bar} **{xp_info['xp_current']}/{xp_info['xp_needed']} XP**"
     )
 
 
-async def send_level_up_message(interaction, player_id, xp_info):
-    if not xp_info or not xp_info["level_up"]:
-        return
+async def send_level_up_messages(interaction, level_ups):
+    for player_id, xp_info in level_ups:
+        if not xp_info or not xp_info["level_up"]:
+            continue
 
-    embed = discord.Embed(
-        title="⭐ LEVEL UP!",
-        description=(
-            f"<@{player_id}> reached **Level {xp_info['new_level']}**!\n\n"
-            f"Total XP: **{xp_info['new_xp']:,}**"
-        ),
-        color=discord.Color.gold()
-    )
+        embed = discord.Embed(
+            title="⭐ LEVEL UP!",
+            description=(
+                f"<@{player_id}> reached **Level {xp_info['new_level']}**!\n\n"
+                f"Total XP: **{xp_info['new_xp']:,}**"
+            ),
+            color=discord.Color.gold()
+        )
 
-    await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 
 class BlackjackGameView(discord.ui.View):
@@ -87,6 +101,7 @@ class BlackjackGameView(discord.ui.View):
         self.dealer_hand = dealer_hand
         self.players = players
         self.bet = bet
+        self.level_ups = []
 
         self.player_hands = {
             player_id: [player_hands[player_id]]
@@ -119,6 +134,14 @@ class BlackjackGameView(discord.ui.View):
                 f"Blackjack error: `{error}`",
                 ephemeral=True
             )
+
+    def award_xp(self, player_id, amount):
+        xp_info = add_xp(player_id, amount)
+
+        if xp_info and xp_info.get("level_up"):
+            self.level_ups.append((player_id, xp_info))
+
+        return xp_info
 
     def current_turn(self):
         return self.turns[self.current_index]
@@ -207,6 +230,7 @@ class BlackjackGameView(discord.ui.View):
         dealer_total = hand_value(self.dealer_hand)
         text = "**Results**\n"
         achievement_checked = set()
+        self.level_ups = []
 
         for player_id in self.players:
             hands = self.player_hands[player_id]
@@ -222,7 +246,8 @@ class BlackjackGameView(discord.ui.View):
                 if player_total > 21:
                     result = f"{hand_label} bust — lost **{bet:,} gold**"
                     record_game_stat(player_id, "loss")
-                    add_xp(player_id, 10)
+                    xp_info = self.award_xp(player_id, 10)
+                    result += xp_result_text(xp_info)
                     update_biggest_loss(player_id, bet)
 
                 elif dealer_total > 21:
@@ -230,7 +255,7 @@ class BlackjackGameView(discord.ui.View):
                     adjust_gold(player_id, payout)
                     result = f"{hand_label} dealer bust — won **{bet:,} gold**"
                     record_game_stat(player_id, "win")
-                    xp_info = add_xp(player_id, 25)
+                    xp_info = self.award_xp(player_id, 25)
                     result += xp_result_text(xp_info)
                     update_biggest_win(player_id, bet)
 
@@ -239,14 +264,14 @@ class BlackjackGameView(discord.ui.View):
                     adjust_gold(player_id, payout)
                     result = f"{hand_label} won **{bet:,} gold**"
                     record_game_stat(player_id, "win")
-                    xp_info = add_xp(player_id, 25)
+                    xp_info = self.award_xp(player_id, 25)
                     result += xp_result_text(xp_info)
                     update_biggest_win(player_id, bet)
 
                 elif player_total < dealer_total:
                     result = f"{hand_label} lost **{bet:,} gold**"
                     record_game_stat(player_id, "loss")
-                    xp_info = add_xp(player_id, 10)
+                    xp_info = self.award_xp(player_id, 10)
                     result += xp_result_text(xp_info)
                     update_biggest_loss(player_id, bet)
 
@@ -254,7 +279,7 @@ class BlackjackGameView(discord.ui.View):
                     adjust_gold(player_id, bet)
                     result = f"{hand_label} push"
                     record_game_stat(player_id, "push")
-                    xp_info = add_xp(player_id, 5)
+                    xp_info = self.award_xp(player_id, 5)
                     result += xp_result_text(xp_info)
 
                 if player_id not in achievement_checked:
@@ -283,6 +308,8 @@ class BlackjackGameView(discord.ui.View):
             embed=self.build_embed(reveal_dealer=True, game_over=True),
             view=None
         )
+
+        await send_level_up_messages(interaction, self.level_ups)
 
     @discord.ui.button(label="Hit", emoji="🃏", style=discord.ButtonStyle.green)
     async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -354,7 +381,7 @@ class BlackjackGameView(discord.ui.View):
 
         self.player_bets[player_id][hand_index] = current_bet * 2
         record_double(player_id)
-        add_xp(player_id, 5)
+        self.award_xp(player_id, 5)
 
         self.has_acted[player_id][hand_index] = True
         self.player_hands[player_id][hand_index].append(self.deck.draw())
@@ -390,7 +417,7 @@ class BlackjackGameView(discord.ui.View):
 
         adjust_gold(player_id, -current_bet)
         record_wager(player_id, current_bet)
-        add_xp(player_id, 5)
+        self.award_xp(player_id, 5)
 
         original_hand = self.player_hands[player_id][0]
 
@@ -531,6 +558,14 @@ class DiceTableView(discord.ui.View):
                 ephemeral=True
             )
 
+    def award_xp(self, player_id, amount, level_ups):
+        xp_info = add_xp(player_id, amount)
+
+        if xp_info and xp_info.get("level_up"):
+            level_ups.append((player_id, xp_info))
+
+        return xp_info
+
     def build_table_embed(self):
         player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
 
@@ -669,13 +704,18 @@ class DiceTableView(discord.ui.View):
         if self.bot_added:
             pot += self.bet
 
+        level_ups = []
+
         if bot_wins and not human_winners:
             for player_id in self.players:
                 record_game_result(player_id, "loss", -self.bet)
-                xp_info = add_xp(player_id, 10)
+                xp_info = self.award_xp(player_id, 10, level_ups)
                 update_biggest_loss(player_id, self.bet)
+
                 result = f"Lost **{self.bet:,} gold**"
                 result += xp_result_text(xp_info)
+                result = add_achievement_text(player_id, result)
+
                 description += f"<@{player_id}>: **{result}**\n"
 
             description += f"\n🤖 Tavern Bot takes the **{pot:,} gold** pot."
@@ -683,36 +723,39 @@ class DiceTableView(discord.ui.View):
         elif len(human_winners) == 1 and not bot_wins:
             winner = human_winners[0]
             winnings = pot - self.bet
-        
+
             for player_id in self.players:
                 if player_id == winner:
                     record_game_result(player_id, "win", winnings)
-                    xp_info = add_xp(player_id, 25)
+                    xp_info = self.award_xp(player_id, 25, level_ups)
                     update_biggest_win(player_id, winnings)
-        
+
                     result = (
                         f"Won the **{pot:,} gold** pot! "
                         f"Net gain: **{winnings:,} gold**"
                     )
                     result += xp_result_text(xp_info)
-        
+
                 else:
                     record_game_result(player_id, "loss", -self.bet)
-                    xp_info = add_xp(player_id, 10)
+                    xp_info = self.award_xp(player_id, 10, level_ups)
                     update_biggest_loss(player_id, self.bet)
-        
+
                     result = f"Lost **{self.bet:,} gold**"
                     result += xp_result_text(xp_info)
-        
+
                 result = add_achievement_text(player_id, result)
                 description += f"<@{player_id}>: **{result}**\n"
 
         else:
             for player_id in self.players:
                 record_game_result(player_id, "push", 0)
-                xp_info = add_xp(player_id, 5)
+                xp_info = self.award_xp(player_id, 5, level_ups)
+
                 result = "Push"
                 result += xp_result_text(xp_info)
+                result = add_achievement_text(player_id, result)
+
                 description += f"<@{player_id}>: **{result}**\n"
 
             description += f"\nTie! The **{pot:,} gold** pot is pushed."
@@ -724,6 +767,7 @@ class DiceTableView(discord.ui.View):
         )
 
         await interaction.response.edit_message(embed=embed, view=None)
+        await send_level_up_messages(interaction, level_ups)
 
 
 class BetModal(discord.ui.Modal):
@@ -880,6 +924,7 @@ async def send_profile(interaction, target_user):
     ) = profile
 
     level, xp_current, xp_needed = get_level_info(xp)
+    bar = progress_bar(xp_current, xp_needed)
 
     win_rate = 0
     if games_played > 0:
@@ -924,7 +969,7 @@ async def send_profile(interaction, target_user):
         name="⭐ Progress",
         value=(
             f"Level: **{level}**\n"
-            f"XP: **{xp_current}/{xp_needed}**\n"
+            f"{bar} **{xp_current}/{xp_needed} XP**\n"
             f"Total XP: **{xp:,}**"
         ),
         inline=True
