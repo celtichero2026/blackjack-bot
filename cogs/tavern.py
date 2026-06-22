@@ -54,6 +54,31 @@ def add_achievement_text(player_id, result):
 
     return result
 
+def xp_result_text(xp_info):
+    if not xp_info:
+        return ""
+
+    return (
+        f"\n⭐ XP Gained: **+{xp_info['xp_gained']}**"
+        f"\nLevel Progress: **{xp_info['xp_current']}/{xp_info['xp_needed']} XP**"
+    )
+
+
+async def send_level_up_message(interaction, player_id, xp_info):
+    if not xp_info or not xp_info["level_up"]:
+        return
+
+    embed = discord.Embed(
+        title="⭐ LEVEL UP!",
+        description=(
+            f"<@{player_id}> reached **Level {xp_info['new_level']}**!\n\n"
+            f"Total XP: **{xp_info['new_xp']:,}**"
+        ),
+        color=discord.Color.gold()
+    )
+
+    await interaction.followup.send(embed=embed)
+
 
 class BlackjackGameView(discord.ui.View):
     def __init__(self, deck, dealer_hand, player_hands, players, bet):
@@ -205,7 +230,8 @@ class BlackjackGameView(discord.ui.View):
                     adjust_gold(player_id, payout)
                     result = f"{hand_label} dealer bust — won **{bet:,} gold**"
                     record_game_stat(player_id, "win")
-                    add_xp(player_id, 25)
+                    xp_info = add_xp(player_id, 25)
+                    result += xp_result_text(xp_info)
                     update_biggest_win(player_id, bet)
 
                 elif player_total > dealer_total:
@@ -213,20 +239,23 @@ class BlackjackGameView(discord.ui.View):
                     adjust_gold(player_id, payout)
                     result = f"{hand_label} won **{bet:,} gold**"
                     record_game_stat(player_id, "win")
-                    add_xp(player_id, 25)
+                    xp_info = add_xp(player_id, 25)
+                    result += xp_result_text(xp_info)
                     update_biggest_win(player_id, bet)
 
                 elif player_total < dealer_total:
                     result = f"{hand_label} lost **{bet:,} gold**"
                     record_game_stat(player_id, "loss")
-                    add_xp(player_id, 10)
+                    xp_info = add_xp(player_id, 10)
+                    result += xp_result_text(xp_info)
                     update_biggest_loss(player_id, bet)
 
                 else:
                     adjust_gold(player_id, bet)
                     result = f"{hand_label} push"
                     record_game_stat(player_id, "push")
-                    add_xp(player_id, 5)
+                    xp_info = add_xp(player_id, 5)
+                    result += xp_result_text(xp_info)
 
                 if player_id not in achievement_checked:
                     result = add_achievement_text(player_id, result)
@@ -643,7 +672,8 @@ class DiceTableView(discord.ui.View):
         if bot_wins and not human_winners:
             for player_id in self.players:
                 record_game_result(player_id, "loss", -self.bet)
-                add_xp(player_id, 10)
+                xp_info = add_xp(player_id, 25)
+                result += xp_result_text(xp_info)
                 update_biggest_loss(player_id, self.bet)
                 result = f"Lost **{self.bet:,} gold**"
                 result = add_achievement_text(player_id, result)
@@ -658,12 +688,14 @@ class DiceTableView(discord.ui.View):
             for player_id in self.players:
                 if player_id == winner:
                     record_game_result(player_id, "win", winnings)
-                    add_xp(player_id, 25)
+                    xp_info = add_xp(player_id, 25)
+                    result += xp_result_text(xp_info)
                     update_biggest_win(player_id, winnings)
                     result = f"Won the **{pot:,} gold** pot! Net gain: **{winnings:,} gold**"
                 else:
                     record_game_result(player_id, "loss", -self.bet)
-                    add_xp(player_id, 10)
+                    xp_info = add_xp(player_id, 10)
+                    result += xp_result_text(xp_info)
                     update_biggest_loss(player_id, self.bet)
                     result = f"Lost **{self.bet:,} gold**"
 
@@ -673,7 +705,8 @@ class DiceTableView(discord.ui.View):
         else:
             for player_id in self.players:
                 record_game_result(player_id, "push", 0)
-                add_xp(player_id, 5)
+                xp_info = add_xp(player_id, 5)
+                result += xp_result_text(xp_info)
                 result = "Push"
                 result = add_achievement_text(player_id, result)
                 description += f"<@{player_id}>: **{result}**\n"
