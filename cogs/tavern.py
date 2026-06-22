@@ -85,6 +85,16 @@ class BlackjackGameView(discord.ui.View):
 
         self.current_index = 0
 
+     async def on_error(self, interaction, error, item):
+        import traceback
+        traceback.print_exception(type(error), error, error.__traceback__)
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"Blackjack error: `{error}`",
+                ephemeral=True
+            )   
+
     def current_turn(self):
         return self.turns[self.current_index]
 
@@ -475,6 +485,16 @@ class DiceTableView(discord.ui.View):
         self.players = [host_id]
         self.bot_added = False
         self.bet = bet
+
+    async def on_error(self, interaction, error, item):
+    import traceback
+    traceback.print_exception(type(error), error, error.__traceback__)
+
+    if not interaction.response.is_done():
+        await interaction.response.send_message(
+            f"Blackjack error: `{error}`",
+            ephemeral=True
+        )
 
     async def on_error(self, interaction, error, item):
         import traceback
