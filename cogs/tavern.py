@@ -69,7 +69,7 @@ TITLE_ITEMS = {
 
 
 
-CONFETTI_DUD_GIF = "PUT_YOUR_CONFETTI_GIF_URL_HERE"
+CONFETTI_DUD_GIF = "https://tenor.com/view/confetti-celebrate-colorful-celebration-gif-15816997"
 
 MISCHIEF_ITEMS = {
     "rotten_tomato": {
