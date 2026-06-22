@@ -15,6 +15,8 @@ from database import (
     record_game_stat,
     get_profile,
     get_player_achievements,
+    add_xp,
+    get_level_info,
     record_wager,
     record_double,
     record_blackjack,
@@ -185,6 +187,7 @@ class BlackjackGameView(discord.ui.View):
                 if player_total > 21:
                     result = f"{hand_label} bust — lost **{bet:,} gold**"
                     record_game_stat(player_id, "loss")
+                    add_xp(player_id, 10)
                     update_biggest_loss(player_id, bet)
 
                 elif dealer_total > 21:
@@ -192,6 +195,7 @@ class BlackjackGameView(discord.ui.View):
                     adjust_gold(player_id, payout)
                     result = f"{hand_label} dealer bust — won **{bet:,} gold**"
                     record_game_stat(player_id, "win")
+                    add_xp(player_id, 25)
                     update_biggest_win(player_id, bet)
 
                 elif player_total > dealer_total:
@@ -199,17 +203,20 @@ class BlackjackGameView(discord.ui.View):
                     adjust_gold(player_id, payout)
                     result = f"{hand_label} won **{bet:,} gold**"
                     record_game_stat(player_id, "win")
+                    add_xp(player_id, 25)
                     update_biggest_win(player_id, bet)
 
                 elif player_total < dealer_total:
                     result = f"{hand_label} lost **{bet:,} gold**"
                     record_game_stat(player_id, "loss")
+                    add_xp(player_id, 10)
                     update_biggest_loss(player_id, bet)
 
                 else:
                     adjust_gold(player_id, bet)
                     result = f"{hand_label} push"
                     record_game_stat(player_id, "push")
+                    add_xp(player_id, 5)
 
                 if player_id not in achievement_checked:
                     result = add_achievement_text(player_id, result)
@@ -308,6 +315,7 @@ class BlackjackGameView(discord.ui.View):
 
         self.player_bets[player_id][hand_index] = current_bet * 2
         record_double(player_id)
+        add_xp(player_id, 5)
 
         self.has_acted[player_id][hand_index] = True
         self.player_hands[player_id][hand_index].append(self.deck.draw())
@@ -343,6 +351,7 @@ class BlackjackGameView(discord.ui.View):
 
         adjust_gold(player_id, -current_bet)
         record_wager(player_id, current_bet)
+        add_xp(player_id, 5)
 
         original_hand = self.player_hands[player_id][0]
 
@@ -604,6 +613,7 @@ class DiceTableView(discord.ui.View):
         if bot_wins and not human_winners:
             for player_id in self.players:
                 record_game_result(player_id, "loss", -self.bet)
+                add_xp(player_id, 10)
                 update_biggest_loss(player_id, self.bet)
                 result = f"Lost **{self.bet:,} gold**"
                 result = add_achievement_text(player_id, result)
@@ -618,10 +628,12 @@ class DiceTableView(discord.ui.View):
             for player_id in self.players:
                 if player_id == winner:
                     record_game_result(player_id, "win", winnings)
+                    add_xp(player_id, 25)
                     update_biggest_win(player_id, winnings)
                     result = f"Won the **{pot:,} gold** pot! Net gain: **{winnings:,} gold**"
                 else:
                     record_game_result(player_id, "loss", -self.bet)
+                    add_xp(player_id, 10)
                     update_biggest_loss(player_id, self.bet)
                     result = f"Lost **{self.bet:,} gold**"
 
@@ -631,6 +643,7 @@ class DiceTableView(discord.ui.View):
         else:
             for player_id in self.players:
                 record_game_result(player_id, "push", 0)
+                add_xp(player_id, 5)
                 result = "Push"
                 result = add_achievement_text(player_id, result)
                 description += f"<@{player_id}>: **{result}**\n"
@@ -795,8 +808,11 @@ async def send_profile(interaction, target_user):
         biggest_win,
         biggest_loss,
         total_wagered,
-        title
+        title,
+        xp
     ) = profile
+
+    level, xp_current, xp_needed = get_level_info(xp)
 
     win_rate = 0
     if games_played > 0:
@@ -838,22 +854,12 @@ async def send_profile(interaction, target_user):
     )
 
     embed.add_field(
-        name="🃏 Blackjack Stats",
+        name="⭐ Progress",
         value=(
-            f"Blackjacks: **{blackjacks:,}**\n"
-            f"Doubles: **{doubles:,}**"
+            f"Level: **{level}**\n"
+            f"XP: **{xp_current}/{xp_needed}**"
         ),
         inline=True
-    )
-
-    embed.add_field(
-        name="💸 Wager Stats",
-        value=(
-            f"Total Wagered: **{total_wagered:,}**\n"
-            f"Biggest Win: **{biggest_win:,}**\n"
-            f"Biggest Loss: **{biggest_loss:,}**"
-        ),
-        inline=False
     )
 
     embed.add_field(
