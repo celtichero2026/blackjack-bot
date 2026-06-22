@@ -108,6 +108,7 @@ def setup_database():
         "tomatoes_taken": "INTEGER DEFAULT 0",
         "pies_thrown": "INTEGER DEFAULT 0",
         "pies_taken": "INTEGER DEFAULT 0",
+        "featured_sticker_id": "TEXT DEFAULT ''",
     }
 
     for column, definition in extra_columns.items():
@@ -138,6 +139,16 @@ def setup_database():
         )
     """)
     
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS player_stickers (
+            user_id TEXT,
+            sticker_id TEXT,
+            quantity INTEGER DEFAULT 1,
+            first_collected TEXT,
+            PRIMARY KEY (user_id, sticker_id)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -766,3 +777,136 @@ def get_mischief_stats(user_id: int):
         return 0, 0, 0, 0
 
     return row
+
+def add_player_sticker(user_id: int, sticker_id: str, amount: int, first_collected: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT quantity
+        FROM player_stickers
+        WHERE user_id = ? AND sticker_id = ?
+        """,
+        (str(user_id), sticker_id)
+    )
+
+    row = cur.fetchone()
+
+    if row:
+        cur.execute(
+            """
+            UPDATE player_stickers
+            SET quantity = quantity + ?
+            WHERE user_id = ? AND sticker_id = ?
+            """,
+            (amount, str(user_id), sticker_id)
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO player_stickers
+            (user_id, sticker_id, quantity, first_collected)
+            VALUES (?, ?, ?, ?)
+            """,
+            (str(user_id), sticker_id, amount, first_collected)
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def get_player_stickers(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT sticker_id, quantity, first_collected
+        FROM player_stickers
+        WHERE user_id = ?
+        ORDER BY first_collected ASC
+        """,
+        (str(user_id),)
+    )
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return rows
+
+
+def get_player_sticker_quantity(user_id: int, sticker_id: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT quantity
+        FROM player_stickers
+        WHERE user_id = ? AND sticker_id = ?
+        """,
+        (str(user_id), sticker_id)
+    )
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    if not row:
+        return 0
+
+    return row[0]
+
+
+def set_featured_sticker(user_id: int, sticker_id: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        """
+        UPDATE players
+        SET featured_sticker_id = ?
+        WHERE user_id = ?
+        """,
+        (sticker_id, str(user_id))
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_featured_sticker(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        """
+        SELECT featured_sticker_id
+        FROM players
+        WHERE user_id = ?
+        """,
+        (str(user_id),)
+    )
+
+    row = cur.fetchone()
+
+    conn.commit()
+    conn.close()
+
+    if not row or not row[0]:
+        return ""
+
+    return row[0]
+
