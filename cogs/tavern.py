@@ -859,7 +859,29 @@ class TavernView(discord.ui.View):
             f"💰 You have **{balance:,} gold**.",
             ephemeral=True
         )
+    @discord.ui.button(label="Shop", emoji="🏪", style=discord.ButtonStyle.gray)
+    async def shop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🏪 The Tavern Shop",
+            description=(
+                "Spend your questionable winnings on things you probably do not need.\n\n"
+                "**Categories:**\n"
+                "🎭 Mischief\n"
+                "🏅 Titles\n"
+                "📦 Sticker Packs\n"
+                "🔊 Sounds"
+            ),
+            color=discord.Color.gold()
+        )
 
+        embed.set_footer(text="No refunds. The Tavern is not responsible for poor decisions.")
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=ShopView(),
+            ephemeral=True
+        )
+        
     @discord.ui.button(label="Profile", emoji="👤", style=discord.ButtonStyle.secondary)
     async def profile_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await send_profile(interaction, interaction.user)
@@ -1125,6 +1147,7 @@ class Tavern(commands.Cog):
                 "🍺 Daily Gold\n"
                 "💰 Balance\n"
                 "👤 Profile\n"
+                "🏪 Shop\n"
                 "🃏 Blackjack\n"
                 "🎲 Dice\n"
                 "🏆 Leaderboard"
