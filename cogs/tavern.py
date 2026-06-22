@@ -377,6 +377,10 @@ class BlackjackTableView(discord.ui.View):
         self.players = [host_id]
         self.bet = bet
 
+    async def on_error(self, interaction, error, item):
+        import traceback
+        traceback.print_exception(type(error), error, error.__traceback__)
+
     def build_table_embed(self):
         player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
 
@@ -471,6 +475,10 @@ class DiceTableView(discord.ui.View):
         self.players = [host_id]
         self.bot_added = False
         self.bet = bet
+
+    async def on_error(self, interaction, error, item):
+        import traceback
+        traceback.print_exception(type(error), error, error.__traceback__)
 
     def build_table_embed(self):
         player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
