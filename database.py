@@ -102,6 +102,7 @@ def setup_database():
         "biggest_loss": "INTEGER DEFAULT 0",
         "total_wagered": "INTEGER DEFAULT 0",
         "title": "TEXT DEFAULT '🍺 Tavern Newbie'"
+        "xp": "INTEGER DEFAULT 0",
     }
 
     for column, definition in extra_columns.items():
