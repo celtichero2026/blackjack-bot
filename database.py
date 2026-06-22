@@ -39,7 +39,7 @@ def get_profile(user_id: int):
             biggest_win,
             biggest_loss,
             total_wagered,
-            title
+            title,
             xp
         FROM players
         WHERE user_id = ?
@@ -102,7 +102,7 @@ def setup_database():
         "biggest_win": "INTEGER DEFAULT 0",
         "biggest_loss": "INTEGER DEFAULT 0",
         "total_wagered": "INTEGER DEFAULT 0",
-        "title": "TEXT DEFAULT '🍺 Tavern Newbie'"
+        "title": "TEXT DEFAULT '🍺 Tavern Newbie'",
         "xp": "INTEGER DEFAULT 0",
     }
 
