@@ -24,6 +24,10 @@ from database import (
     update_biggest_loss,
     adjust_gold,
     add_gold,
+    add_inventory_item,
+    player_owns_item,
+    get_player_titles,
+    set_player_title,
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
@@ -33,6 +37,30 @@ from achievements import ACHIEVEMENTS
 TROPHY_ID = 875349215876894720
 FOUNDER_ID = 502268158749573132
 BASE_BET = 100
+DEFAULT_TITLE = "🍺 Tavern Newbie"
+
+TITLE_ITEMS = {
+    "gold_hoarder": {
+        "name": "💰 Gold Hoarder",
+        "price": 5000,
+    },
+    "dice_goblin": {
+        "name": "🎲 Dice Goblin",
+        "price": 10000,
+    },
+    "card_shark": {
+        "name": "🃏 Card Shark",
+        "price": 25000,
+    },
+    "high_roller": {
+        "name": "🎖 High Roller",
+        "price": 50000,
+    },
+    "tavern_royalty": {
+        "name": "👑 Tavern Royalty",
+        "price": 100000,
+    },
+}
 
 
 def is_tavern_channel(interaction):
@@ -872,7 +900,6 @@ class TavernView(discord.ui.View):
         )
     @discord.ui.button(label="Shop", emoji="🏪", style=discord.ButtonStyle.gray)
     async def shop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        
         await interaction.response.send_message(
             embed=build_shop_embed(interaction.user.id),
             view=ShopView(interaction.user.id),
@@ -1028,29 +1055,7 @@ def build_shop_embed(user_id):
     )
 
     return embed
-
-def build_titles_embed():
-    embed = discord.Embed(
-        title="🎖 Title Shop",
-        description=(
-            "**Current Title:**\n"
-            "🍺 Tavern Newbie\n\n"
-            "**Owned Titles:**\n"
-            "🍺 Tavern Newbie\n\n"
-            "**Available Titles:**\n"
-            "💰 Gold Hoarder — 5,000 gold\n"
-            "🎲 Dice Goblin — 10,000 gold\n"
-            "🃏 Card Shark — 25,000 gold\n"
-            "🎖 High Roller — 50,000 gold\n"
-            "👑 Tavern Royalty — 100,000 gold"
-        ),
-        color=discord.Color.gold()
-    )
-
-    embed.set_footer(text="Buy and equip buttons coming next.")
-    return embed
-
-
+    
 class ShopView(discord.ui.View):
     def __init__(self, owner_id):
         super().__init__(timeout=180)
@@ -1082,7 +1087,7 @@ class ShopView(discord.ui.View):
     async def titles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             content=None,
-            embed=build_titles_embed(),
+            embed=build_titles_embed(self.owner_id),
             view=TitleShopView(self.owner_id)
         )
 
@@ -1110,21 +1115,11 @@ class ShopView(discord.ui.View):
             view=ShopBackView(self.owner_id)
         )
 
- 
-
 
 class ShopBackView(discord.ui.View):
     def __init__(self, owner_id):
         super().__init__(timeout=180)
         self.owner_id = owner_id
-
-    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
-    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(
-            content=None,
-            embed=build_shop_embed(self.owner_id),
-            view=ShopView(self.owner_id)
-        )
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.owner_id:
@@ -1135,6 +1130,323 @@ class ShopBackView(discord.ui.View):
             return False
 
         return True
+
+    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(self.owner_id),
+            view=ShopView(self.owner_id)
+        )
+
+def build_titles_embed(user_id):
+    balance = get_balance(user_id)
+    profile = get_profile(user_id)
+
+    active_title = DEFAULT_TITLE
+    if profile:
+        active_title = profile[10]
+
+    owned_title_ids = get_player_titles(user_id)
+
+    owned_titles = [DEFAULT_TITLE]
+
+    for title_id in owned_title_ids:
+        title = TITLE_ITEMS.get(title_id)
+        if title:
+            owned_titles.append(title["name"])
+
+    owned_text = "\n".join(owned_titles)
+
+    available_lines = []
+
+    for title_id, title in TITLE_ITEMS.items():
+        price = title["price"]
+        name = title["name"]
+
+        if title_id in owned_title_ids:
+            available_lines.append(f"✅ {name} — Owned")
+        else:
+            available_lines.append(f"{name} — {price:,} gold")
+
+    available_text = "\n".join(available_lines)
+
+    embed = discord.Embed(
+        title="🎖 Title Shop",
+        description=(
+            f"💰 Gold: **{balance:,}**\n\n"
+            f"**Current Title:**\n"
+            f"{active_title}\n\n"
+            f"**Owned Titles:**\n"
+            f"{owned_text}\n\n"
+            f"**Available Titles:**\n"
+            f"{available_text}"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Buy a title, then equip it from your owned titles.")
+    return embed
+
+
+def build_buy_titles_embed(user_id):
+    balance = get_balance(user_id)
+
+    lines = []
+
+    for title_id, title in TITLE_ITEMS.items():
+        if player_owns_item(user_id, title_id):
+            continue
+
+        lines.append(f"{title['name']} — {title['price']:,} gold")
+
+    available_text = "\n".join(lines)
+
+    if not available_text:
+        available_text = "You already own every title in the shop."
+
+    embed = discord.Embed(
+        title="💰 Buy a Title",
+        description=(
+            f"💰 Gold: **{balance:,}**\n\n"
+            f"{available_text}\n\n"
+            "Choose a title from the dropdown below."
+        ),
+        color=discord.Color.gold()
+    )
+
+    return embed
+
+
+def build_equip_titles_embed(user_id):
+    profile = get_profile(user_id)
+
+    active_title = DEFAULT_TITLE
+    if profile:
+        active_title = profile[10]
+
+    owned_title_ids = get_player_titles(user_id)
+
+    owned_titles = [DEFAULT_TITLE]
+
+    for title_id in owned_title_ids:
+        title = TITLE_ITEMS.get(title_id)
+        if title:
+            owned_titles.append(title["name"])
+
+    embed = discord.Embed(
+        title="🎖 Equip a Title",
+        description=(
+            f"**Current Title:**\n"
+            f"{active_title}\n\n"
+            f"**Owned Titles:**\n"
+            f"{chr(10).join(owned_titles)}\n\n"
+            "Choose a title from the dropdown below."
+        ),
+        color=discord.Color.gold()
+    )
+
+    return embed
+
+
+class BuyTitleSelect(discord.ui.Select):
+    def __init__(self, owner_id):
+        self.owner_id = owner_id
+
+        owned_title_ids = get_player_titles(owner_id)
+
+        options = []
+
+        for title_id, title in TITLE_ITEMS.items():
+            if title_id in owned_title_ids:
+                continue
+
+            options.append(
+                discord.SelectOption(
+                    label=title["name"],
+                    description=f"{title['price']:,} gold",
+                    value=title_id
+                )
+            )
+
+        super().__init__(
+            placeholder="Choose a title to buy...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        title_id = self.values[0]
+        title = TITLE_ITEMS.get(title_id)
+
+        if not title:
+            await interaction.response.send_message(
+                "That title does not exist.",
+                ephemeral=True
+            )
+            return
+
+        if player_owns_item(interaction.user.id, title_id):
+            await interaction.response.send_message(
+                "You already own that title.",
+                ephemeral=True
+            )
+            return
+
+        price = title["price"]
+        balance = get_balance(interaction.user.id)
+
+        if balance < price:
+            await interaction.response.send_message(
+                f"You need **{price:,} gold** to buy {title['name']}.\n"
+                f"Your balance is **{balance:,} gold**.",
+                ephemeral=True
+            )
+            return
+
+        add_gold(interaction.user.id, -price)
+
+        date_acquired = datetime.now(timezone.utc).isoformat()
+
+        add_inventory_item(
+            interaction.user.id,
+            title_id,
+            "title",
+            date_acquired
+        )
+
+        embed = build_titles_embed(interaction.user.id)
+        embed.set_footer(text=f"Purchased {title['name']} for {price:,} gold.")
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=TitleShopView(interaction.user.id)
+        )
+
+
+class BuyTitleSelectView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+        self.add_item(BuyTitleSelect(owner_id))
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This title menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Back to Titles", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_titles_embed(self.owner_id),
+            view=TitleShopView(self.owner_id)
+        )
+
+
+class EquipTitleSelect(discord.ui.Select):
+    def __init__(self, owner_id):
+        self.owner_id = owner_id
+
+        owned_title_ids = get_player_titles(owner_id)
+
+        options = [
+            discord.SelectOption(
+                label=DEFAULT_TITLE,
+                description="Default Tavern title",
+                value="default"
+            )
+        ]
+
+        for title_id in owned_title_ids:
+            title = TITLE_ITEMS.get(title_id)
+            if not title:
+                continue
+
+            options.append(
+                discord.SelectOption(
+                    label=title["name"],
+                    description="Owned title",
+                    value=title_id
+                )
+            )
+
+        super().__init__(
+            placeholder="Choose a title to equip...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+
+        if selected == "default":
+            set_player_title(interaction.user.id, DEFAULT_TITLE)
+            equipped_title = DEFAULT_TITLE
+        else:
+            title = TITLE_ITEMS.get(selected)
+
+            if not title:
+                await interaction.response.send_message(
+                    "That title does not exist.",
+                    ephemeral=True
+                )
+                return
+
+            if not player_owns_item(interaction.user.id, selected):
+                await interaction.response.send_message(
+                    "You do not own that title.",
+                    ephemeral=True
+                )
+                return
+
+            equipped_title = title["name"]
+            set_player_title(interaction.user.id, equipped_title)
+
+        embed = build_titles_embed(interaction.user.id)
+        embed.set_footer(text=f"Equipped title: {equipped_title}")
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=TitleShopView(interaction.user.id)
+        )
+
+
+class EquipTitleSelectView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+        self.add_item(EquipTitleSelect(owner_id))
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This title menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Back to Titles", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_titles_embed(self.owner_id),
+            view=TitleShopView(self.owner_id)
+        )
+
 
 class TitleShopView(discord.ui.View):
     def __init__(self, owner_id):
@@ -1153,16 +1465,37 @@ class TitleShopView(discord.ui.View):
 
     @discord.ui.button(label="Buy Title", emoji="💰", style=discord.ButtonStyle.green)
     async def buy_title_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "💰 Buying titles is coming next.",
-            ephemeral=True
+        owned_title_ids = get_player_titles(self.owner_id)
+
+        available_titles = [
+            title_id
+            for title_id in TITLE_ITEMS
+            if title_id not in owned_title_ids
+        ]
+
+        if not available_titles:
+            embed = build_titles_embed(self.owner_id)
+            embed.set_footer(text="You already own every title in the shop.")
+
+            await interaction.response.edit_message(
+                content=None,
+                embed=embed,
+                view=TitleShopView(self.owner_id)
+            )
+            return
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_buy_titles_embed(self.owner_id),
+            view=BuyTitleSelectView(self.owner_id)
         )
 
     @discord.ui.button(label="Equip Title", emoji="🎖", style=discord.ButtonStyle.blurple)
     async def equip_title_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "🎖 Equipping titles is coming next.",
-            ephemeral=True
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_equip_titles_embed(self.owner_id),
+            view=EquipTitleSelectView(self.owner_id)
         )
 
     @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
