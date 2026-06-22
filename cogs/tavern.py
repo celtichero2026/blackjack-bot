@@ -1128,15 +1128,6 @@ class ShopBackView(discord.ui.View):
 
         return True
 
-    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
-    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(
-            content=None,
-            embed=build_shop_embed(),
-            view=ShopView(self.owner_id)
-        )
-
-
 class TitleShopView(discord.ui.View):
     def __init__(self, owner_id):
         super().__init__(timeout=180)
