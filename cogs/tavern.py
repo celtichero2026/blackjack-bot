@@ -672,11 +672,10 @@ class DiceTableView(discord.ui.View):
         if bot_wins and not human_winners:
             for player_id in self.players:
                 record_game_result(player_id, "loss", -self.bet)
-                xp_info = add_xp(player_id, 25)
-                result += xp_result_text(xp_info)
+                xp_info = add_xp(player_id, 10)
                 update_biggest_loss(player_id, self.bet)
                 result = f"Lost **{self.bet:,} gold**"
-                result = add_achievement_text(player_id, result)
+                result += xp_result_text(xp_info)
                 description += f"<@{player_id}>: **{result}**\n"
 
             description += f"\n🤖 Tavern Bot takes the **{pot:,} gold** pot."
@@ -684,21 +683,27 @@ class DiceTableView(discord.ui.View):
         elif len(human_winners) == 1 and not bot_wins:
             winner = human_winners[0]
             winnings = pot - self.bet
-
+        
             for player_id in self.players:
                 if player_id == winner:
                     record_game_result(player_id, "win", winnings)
                     xp_info = add_xp(player_id, 25)
-                    result += xp_result_text(xp_info)
                     update_biggest_win(player_id, winnings)
-                    result = f"Won the **{pot:,} gold** pot! Net gain: **{winnings:,} gold**"
+        
+                    result = (
+                        f"Won the **{pot:,} gold** pot! "
+                        f"Net gain: **{winnings:,} gold**"
+                    )
+                    result += xp_result_text(xp_info)
+        
                 else:
                     record_game_result(player_id, "loss", -self.bet)
                     xp_info = add_xp(player_id, 10)
-                    result += xp_result_text(xp_info)
                     update_biggest_loss(player_id, self.bet)
+        
                     result = f"Lost **{self.bet:,} gold**"
-
+                    result += xp_result_text(xp_info)
+        
                 result = add_achievement_text(player_id, result)
                 description += f"<@{player_id}>: **{result}**\n"
 
@@ -706,9 +711,8 @@ class DiceTableView(discord.ui.View):
             for player_id in self.players:
                 record_game_result(player_id, "push", 0)
                 xp_info = add_xp(player_id, 5)
-                result += xp_result_text(xp_info)
                 result = "Push"
-                result = add_achievement_text(player_id, result)
+                result += xp_result_text(xp_info)
                 description += f"<@{player_id}>: **{result}**\n"
 
             description += f"\nTie! The **{pot:,} gold** pot is pushed."
