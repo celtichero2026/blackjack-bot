@@ -983,6 +983,45 @@ async def send_profile(interaction, target_user):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+class ShopView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Mischief", emoji="🎭", style=discord.ButtonStyle.red)
+    async def mischief_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🎭 **Mischief Shop** coming soon.\nRotten tomatoes, cream pies, lucky shields, and other bad decisions.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Titles", emoji="🎖", style=discord.ButtonStyle.blurple)
+    async def titles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🎖 **Title Shop** coming soon.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Sticker Packs", emoji="📦", style=discord.ButtonStyle.green)
+    async def sticker_packs_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "📦 **Sticker Packs** coming soon.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Sounds", emoji="🔊", style=discord.ButtonStyle.gray)
+    async def sounds_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🔊 **Sound Shop** coming soon.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "🍺 Use `/tavern` to return to The Tavern menu.",
+            ephemeral=True
+        )
+        
 
 class Tavern(commands.Cog):
     def __init__(self, bot):
@@ -1039,6 +1078,35 @@ class Tavern(commands.Cog):
 
         target = user or interaction.user
         await send_profile(interaction, target)
+        
+    @app_commands.command(name="shop", description="Open The Tavern shop")
+    async def shop(self, interaction: discord.Interaction):
+        if not is_tavern_channel(interaction):
+            await interaction.response.send_message(
+                "🍺 TrophyBot only runs in **The Tavern**.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="🏪 The Tavern Shop",
+            description=(
+                "Spend your questionable winnings on things you probably do not need.\n\n"
+                "**Categories:**\n"
+                "🎭 Mischief\n"
+                "🎖 Titles\n"
+                "📦 Sticker Packs\n"
+                "🔊 Sounds"
+            ),
+            color=discord.Color.gold()
+        )
+
+        embed.set_footer(text="No refunds. The Tavern is not responsible for poor decisions.")
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=ShopView()
+        )
 
     @app_commands.command(name="tavern", description="Open The Tavern menu")
     async def tavern(self, interaction: discord.Interaction):
