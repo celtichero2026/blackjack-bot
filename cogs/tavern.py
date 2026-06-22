@@ -120,7 +120,19 @@ async def send_level_up_messages(interaction, level_ups):
         )
 
         await interaction.followup.send(embed=embed)
+        
+def get_active_title(user_id):
+    profile = get_profile(user_id)
 
+    if profile and profile[10]:
+        return profile[10]
+
+    return DEFAULT_TITLE
+
+
+def format_table_player(player_id):
+    title = get_active_title(player_id)
+    return f"- <@{player_id}> — {title}"
 
 class BlackjackGameView(discord.ui.View):
     def __init__(self, deck, dealer_hand, player_hands, players, bet):
@@ -482,7 +494,9 @@ class BlackjackTableView(discord.ui.View):
             )
 
     def build_table_embed(self):
-        player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
+        player_list = "\n".join(
+            [format_table_player(player_id) for player_id in self.players]
+        )
 
         if TROPHY_ID in self.players:
             player_list += (
@@ -595,7 +609,9 @@ class DiceTableView(discord.ui.View):
         return xp_info
 
     def build_table_embed(self):
-        player_list = "\n".join([f"- <@{player_id}>" for player_id in self.players])
+        player_list = "\n".join(
+            [format_table_player(player_id) for player_id in self.players]
+        )
 
         if self.bot_added:
             player_list += "\n- 🤖 Tavern Bot"
