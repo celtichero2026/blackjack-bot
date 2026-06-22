@@ -545,3 +545,130 @@ def set_player_title(user_id: int, title: str):
 
     conn.commit()
     conn.close()
+
+
+def add_inventory_quantity(user_id: int, item_id: str, item_type: str, amount: int, date_acquired: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT quantity
+        FROM player_inventory
+        WHERE user_id = ? AND item_id = ?
+        """,
+        (str(user_id), item_id)
+    )
+
+    row = cur.fetchone()
+
+    if row:
+        cur.execute(
+            """
+            UPDATE player_inventory
+            SET quantity = quantity + ?
+            WHERE user_id = ? AND item_id = ?
+            """,
+            (amount, str(user_id), item_id)
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO player_inventory
+            (user_id, item_id, item_type, quantity, date_acquired)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (str(user_id), item_id, item_type, amount, date_acquired)
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def get_inventory_quantity(user_id: int, item_id: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT quantity
+        FROM player_inventory
+        WHERE user_id = ? AND item_id = ?
+        """,
+        (str(user_id), item_id)
+    )
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    if not row:
+        return 0
+
+    return row[0]
+
+
+def consume_inventory_item(user_id: int, item_id: str, amount: int = 1):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT quantity
+        FROM player_inventory
+        WHERE user_id = ? AND item_id = ?
+        """,
+        (str(user_id), item_id)
+    )
+
+    row = cur.fetchone()
+
+    if not row or row[0] < amount:
+        conn.close()
+        return False
+
+    new_quantity = row[0] - amount
+
+    if new_quantity <= 0:
+        cur.execute(
+            """
+            DELETE FROM player_inventory
+            WHERE user_id = ? AND item_id = ?
+            """,
+            (str(user_id), item_id)
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE player_inventory
+            SET quantity = ?
+            WHERE user_id = ? AND item_id = ?
+            """,
+            (new_quantity, str(user_id), item_id)
+        )
+
+    conn.commit()
+    conn.close()
+
+    return True
+
+
+def get_inventory_by_type(user_id: int, item_type: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT item_id, quantity
+        FROM player_inventory
+        WHERE user_id = ? AND item_type = ?
+        ORDER BY date_acquired ASC
+        """,
+        (str(user_id), item_type)
+    )
+
+    rows = cur.fetchall()
+
+    conn.close()
+
+    return rows
