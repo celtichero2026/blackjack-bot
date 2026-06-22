@@ -34,6 +34,11 @@ from database import (
     get_inventory_by_type,
     record_mischief_hit,
     get_mischief_stats,
+    add_player_sticker,
+    get_player_stickers,
+    get_player_sticker_quantity,
+    set_featured_sticker,
+    get_featured_sticker,
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
@@ -84,6 +89,324 @@ MISCHIEF_ITEMS = {
     "mystery_box": {
         "name": "🎁 Mystery Box",
         "price": 1000,
+    },
+}
+
+
+STICKER_RARITIES = {
+    "common": {
+        "label": "⚪ Common",
+        "weight": 55,
+    },
+    "uncommon": {
+        "label": "🟢 Uncommon",
+        "weight": 25,
+    },
+    "rare": {
+        "label": "🔵 Rare",
+        "weight": 12,
+    },
+    "epic": {
+        "label": "🟣 Epic",
+        "weight": 6,
+    },
+    "legendary": {
+        "label": "🟡 Legendary",
+        "weight": 2,
+    },
+}
+
+STICKERS = {
+    "welcome_tavern_newbie": {
+        "name": "🍺 Tavern Newbie",
+        "rarity": "common",
+        "collection": "welcome",
+        "quote": "Everyone starts somewhere. Usually broke.",
+    },
+    "welcome_daily_gold": {
+        "name": "💰 Daily Gold",
+        "rarity": "common",
+        "collection": "welcome",
+        "quote": "A responsible financial decision, somehow.",
+    },
+    "welcome_first_drink": {
+        "name": "🍻 First Drink",
+        "rarity": "common",
+        "collection": "welcome",
+        "quote": "The beginning of many questionable choices.",
+    },
+    "welcome_questionable_choices": {
+        "name": "🤔 Questionable Choices",
+        "rarity": "uncommon",
+        "collection": "welcome",
+        "quote": "The official Tavern lifestyle.",
+    },
+    "welcome_bar_tab": {
+        "name": "🧾 Open Bar Tab",
+        "rarity": "uncommon",
+        "collection": "welcome",
+        "quote": "Nobody knows who approved this.",
+    },
+    "welcome_house_rules": {
+        "name": "📜 House Rules",
+        "rarity": "rare",
+        "collection": "welcome",
+        "quote": "The house always wins. Unless it does not.",
+    },
+    "welcome_warm_seat": {
+        "name": "🪑 Warm Seat",
+        "rarity": "rare",
+        "collection": "welcome",
+        "quote": "Someone has been here too long.",
+    },
+    "welcome_tavern_regular": {
+        "name": "🎰 Tavern Regular",
+        "rarity": "epic",
+        "collection": "welcome",
+        "quote": "They say they can quit whenever they want.",
+    },
+    "welcome_founders_favor": {
+        "name": "🏆 Founder's Favor",
+        "rarity": "legendary",
+        "collection": "welcome",
+        "quote": "Blessed by management. Probably dangerous.",
+    },
+    "welcome_trophys_fault": {
+        "name": "🎰 Trophy's Fault",
+        "rarity": "legendary",
+        "collection": "welcome",
+        "quote": "This entire establishment is technically his fault.",
+    },
+
+    "mischief_tomato_target": {
+        "name": "🍅 Tomato Target",
+        "rarity": "common",
+        "collection": "mischief",
+        "quote": "A face made for produce.",
+    },
+    "mischief_pie_face": {
+        "name": "🥧 Pie Face",
+        "rarity": "common",
+        "collection": "mischief",
+        "quote": "Dessert has consequences.",
+    },
+    "mischief_confetti_dud": {
+        "name": "✨ Confetti Dud",
+        "rarity": "common",
+        "collection": "mischief",
+        "quote": "A sad little puff of celebration.",
+    },
+    "mischief_extra_juicy": {
+        "name": "💦 Extra Juicy",
+        "rarity": "uncommon",
+        "collection": "mischief",
+        "quote": "Oof. That one had splash damage.",
+    },
+    "mischief_hr_territory": {
+        "name": "🫣 HR Territory",
+        "rarity": "uncommon",
+        "collection": "mischief",
+        "quote": "The Tavern will not be taking questions.",
+    },
+    "mischief_mystery_box": {
+        "name": "🎁 Mystery Box",
+        "rarity": "rare",
+        "collection": "mischief",
+        "quote": "Nothing bad has ever come from opening boxes.",
+    },
+    "mischief_backfire": {
+        "name": "💥 Backfire",
+        "rarity": "rare",
+        "collection": "mischief",
+        "quote": "The prank became self-aware.",
+    },
+    "mischief_managed": {
+        "name": "🎭 Mischief Managed",
+        "rarity": "epic",
+        "collection": "mischief",
+        "quote": "It was handled poorly, but confidently.",
+    },
+    "mischief_chaos_goblin": {
+        "name": "🧨 Chaos Goblin",
+        "rarity": "epic",
+        "collection": "mischief",
+        "quote": "Small, loud, and absolutely not sorry.",
+    },
+    "mischief_public_menace": {
+        "name": "🚨 Public Menace",
+        "rarity": "legendary",
+        "collection": "mischief",
+        "quote": "The Tavern's most wanted menace.",
+    },
+
+    "casino_bad_roll": {
+        "name": "🎲 Bad Roll",
+        "rarity": "common",
+        "collection": "casino",
+        "quote": "The dice were emotionally unavailable.",
+    },
+    "casino_broke_again": {
+        "name": "💸 Broke Again",
+        "rarity": "common",
+        "collection": "casino",
+        "quote": "A classic Tavern condition.",
+    },
+    "casino_suspicious_hand": {
+        "name": "🃏 Suspicious Hand",
+        "rarity": "common",
+        "collection": "casino",
+        "quote": "Nobody saw anything. Probably.",
+    },
+    "casino_push_it": {
+        "name": "🤝 Push It",
+        "rarity": "uncommon",
+        "collection": "casino",
+        "quote": "Not winning. Not losing. Just vibing.",
+    },
+    "casino_dice_goblin": {
+        "name": "🎲 Dice Goblin",
+        "rarity": "uncommon",
+        "collection": "casino",
+        "quote": "Rolls with confidence. Loses with style.",
+    },
+    "casino_card_shark": {
+        "name": "🦈 Card Shark",
+        "rarity": "rare",
+        "collection": "casino",
+        "quote": "Knows the odds and ignores them anyway.",
+    },
+    "casino_dealer_knows": {
+        "name": "👀 The Dealer Knows",
+        "rarity": "rare",
+        "collection": "casino",
+        "quote": "The dealer saw that.",
+    },
+    "casino_hot_streak": {
+        "name": "🔥 Hot Streak",
+        "rarity": "epic",
+        "collection": "casino",
+        "quote": "Finally, suspiciously lucky.",
+    },
+    "casino_high_roller": {
+        "name": "💎 High Roller",
+        "rarity": "epic",
+        "collection": "casino",
+        "quote": "Big bets. Bigger denial.",
+    },
+    "casino_house_lost": {
+        "name": "🍀 The House Lost",
+        "rarity": "legendary",
+        "collection": "casino",
+        "quote": "A rare and beautiful disaster.",
+    },
+}
+
+STICKER_COLLECTIONS = {
+    "welcome": {
+        "name": "🍺 Welcome Collection",
+        "short_name": "Welcome",
+        "description": "The starter set for Tavern regulars.",
+        "stickers": [
+            "welcome_tavern_newbie",
+            "welcome_daily_gold",
+            "welcome_first_drink",
+            "welcome_questionable_choices",
+            "welcome_bar_tab",
+            "welcome_house_rules",
+            "welcome_warm_seat",
+            "welcome_tavern_regular",
+            "welcome_founders_favor",
+            "welcome_trophys_fault",
+        ],
+    },
+    "mischief": {
+        "name": "🎭 Mischief Collection",
+        "short_name": "Mischief",
+        "description": "Tomatoes, pies, boxes, and poor choices.",
+        "stickers": [
+            "mischief_tomato_target",
+            "mischief_pie_face",
+            "mischief_confetti_dud",
+            "mischief_extra_juicy",
+            "mischief_hr_territory",
+            "mischief_mystery_box",
+            "mischief_backfire",
+            "mischief_managed",
+            "mischief_chaos_goblin",
+            "mischief_public_menace",
+        ],
+    },
+    "casino": {
+        "name": "🎲 Casino Collection",
+        "short_name": "Casino",
+        "description": "Dice rolls, bad hands, and impossible luck.",
+        "stickers": [
+            "casino_bad_roll",
+            "casino_broke_again",
+            "casino_suspicious_hand",
+            "casino_push_it",
+            "casino_dice_goblin",
+            "casino_card_shark",
+            "casino_dealer_knows",
+            "casino_hot_streak",
+            "casino_high_roller",
+            "casino_house_lost",
+        ],
+    },
+}
+
+STICKER_PACKS = {
+    "welcome_pack": {
+        "name": "🍺 Welcome Pack",
+        "price": 1000,
+        "pulls": 3,
+        "collections": ["welcome"],
+        "weights": {
+            "common": 62,
+            "uncommon": 24,
+            "rare": 10,
+            "epic": 3,
+            "legendary": 1,
+        },
+    },
+    "mischief_pack": {
+        "name": "🎭 Mischief Pack",
+        "price": 1250,
+        "pulls": 3,
+        "collections": ["mischief"],
+        "weights": {
+            "common": 58,
+            "uncommon": 25,
+            "rare": 12,
+            "epic": 4,
+            "legendary": 1,
+        },
+    },
+    "casino_pack": {
+        "name": "🎲 Casino Pack",
+        "price": 1500,
+        "pulls": 3,
+        "collections": ["casino"],
+        "weights": {
+            "common": 56,
+            "uncommon": 25,
+            "rare": 13,
+            "epic": 5,
+            "legendary": 1,
+        },
+    },
+    "tavern_mix_pack": {
+        "name": "📦 Tavern Mix Pack",
+        "price": 3000,
+        "pulls": 5,
+        "collections": ["welcome", "mischief", "casino"],
+        "weights": {
+            "common": 48,
+            "uncommon": 27,
+            "rare": 16,
+            "epic": 7,
+            "legendary": 2,
+        },
     },
 }
 
@@ -158,6 +481,107 @@ def format_table_player(player_id):
     title = get_active_title(player_id)
     return f"- <@{player_id}> — {title}"
 
+
+
+
+def get_sticker_quantity_map(user_id):
+    rows = get_player_stickers(user_id)
+    return {
+        sticker_id: quantity
+        for sticker_id, quantity, first_collected in rows
+    }
+
+
+def get_sticker_rarity_label(sticker_id):
+    sticker = STICKERS.get(sticker_id)
+
+    if not sticker:
+        return "⚪ Common"
+
+    rarity = sticker.get("rarity", "common")
+    return STICKER_RARITIES.get(rarity, STICKER_RARITIES["common"])["label"]
+
+
+def get_collection_progress(user_id, collection_id):
+    collection = STICKER_COLLECTIONS.get(collection_id)
+
+    if not collection:
+        return 0, 0
+
+    sticker_map = get_sticker_quantity_map(user_id)
+    stickers = collection["stickers"]
+    owned = sum(
+        1
+        for sticker_id in stickers
+        if sticker_map.get(sticker_id, 0) > 0
+    )
+
+    return owned, len(stickers)
+
+
+def get_total_sticker_progress(user_id):
+    sticker_map = get_sticker_quantity_map(user_id)
+    total = len(STICKERS)
+    owned = sum(
+        1
+        for sticker_id in STICKERS
+        if sticker_map.get(sticker_id, 0) > 0
+    )
+
+    return owned, total
+
+
+def get_featured_sticker_for_user(user_id):
+    featured_id = get_featured_sticker(user_id)
+    sticker_map = get_sticker_quantity_map(user_id)
+
+    if featured_id in STICKERS and sticker_map.get(featured_id, 0) > 0:
+        return featured_id
+
+    for sticker_id in STICKERS:
+        if sticker_map.get(sticker_id, 0) > 0:
+            return sticker_id
+
+    return ""
+
+
+def roll_sticker_from_pack(pack_id):
+    pack = STICKER_PACKS[pack_id]
+    rarity_names = list(pack["weights"].keys())
+    rarity_weights = list(pack["weights"].values())
+
+    selected_rarity = random.choices(
+        rarity_names,
+        weights=rarity_weights,
+        k=1
+    )[0]
+
+    possible_stickers = [
+        sticker_id
+        for sticker_id, sticker in STICKERS.items()
+        if (
+            sticker["collection"] in pack["collections"]
+            and sticker["rarity"] == selected_rarity
+        )
+    ]
+
+    if not possible_stickers:
+        possible_stickers = [
+            sticker_id
+            for sticker_id, sticker in STICKERS.items()
+            if sticker["collection"] in pack["collections"]
+        ]
+
+    return random.choice(possible_stickers)
+
+
+def progress_line(current, total):
+    percent = 0
+
+    if total > 0:
+        percent = (current / total) * 100
+
+    return f"**{current} / {total}** • {percent:.0f}%"
 
 def get_owned_mischief_items(user_id):
     rows = get_inventory_by_type(user_id, "mischief")
@@ -1296,17 +1720,230 @@ def build_inventory_embed(target_user):
 
 
 def build_sticker_book_embed(target_user):
+    sticker_map = get_sticker_quantity_map(target_user.id)
+    owned_total, total_stickers = get_total_sticker_progress(target_user.id)
+    featured_id = get_featured_sticker_for_user(target_user.id)
+
+    if featured_id:
+        featured = STICKERS[featured_id]
+        featured_text = (
+            f"{get_sticker_rarity_label(featured_id)}\n"
+            f"**{featured['name']}**\n"
+            f"*{featured['quote']}*"
+        )
+    else:
+        featured_text = (
+            "No featured sticker yet.\n"
+            "Open sticker packs to start your collection."
+        )
+
+    collection_lines = []
+
+    for collection_id, collection in STICKER_COLLECTIONS.items():
+        owned, total = get_collection_progress(target_user.id, collection_id)
+        collection_lines.append(
+            f"{collection['name']}: {progress_line(owned, total)}"
+        )
+
     embed = discord.Embed(
         title=f"📖 {target_user.display_name}'s Sticker Book",
         description=(
-            "Sticker book is coming soon.\n\n"
-            "Eventually this page can show collected stickers, missing stickers, "
-            "and set completion."
+            f"**Featured Sticker**\n"
+            f"{featured_text}\n\n"
+            f"**Total Completion**\n"
+            f"{progress_line(owned_total, total_stickers)}"
         ),
         color=discord.Color.gold()
     )
 
+    embed.add_field(
+        name="📚 Collections",
+        value="\n".join(collection_lines),
+        inline=False
+    )
+
+    embed.set_footer(text="Choose a collection below to flip through the sticker pages.")
     return embed
+
+
+def build_sticker_collection_embed(target_user, collection_id, page_index):
+    collection = STICKER_COLLECTIONS.get(collection_id)
+
+    if not collection:
+        return discord.Embed(
+            title="📖 Sticker Collection",
+            description="That sticker collection does not exist.",
+            color=discord.Color.gold()
+        )
+
+    stickers = collection["stickers"]
+    total = len(stickers)
+
+    if total == 0:
+        page_index = 0
+    else:
+        page_index = page_index % total
+
+    sticker_id = stickers[page_index]
+    sticker = STICKERS[sticker_id]
+    quantity = get_player_sticker_quantity(target_user.id, sticker_id)
+    owned = quantity > 0
+    collection_owned, collection_total = get_collection_progress(target_user.id, collection_id)
+
+    if owned:
+        sticker_name = sticker["name"]
+        owned_text = f"Owned: **Yes x{quantity}**"
+        quote_text = f"*{sticker['quote']}*"
+    else:
+        sticker_name = "🔒 Unknown Sticker"
+        owned_text = "Owned: **No**"
+        quote_text = "Find this sticker in a sticker pack."
+
+    embed = discord.Embed(
+        title=collection["name"],
+        description=(
+            f"Sticker **{page_index + 1} / {total}**\n\n"
+            f"{get_sticker_rarity_label(sticker_id)}\n"
+            f"**{sticker_name}**\n"
+            f"{owned_text}\n\n"
+            f"{quote_text}\n\n"
+            f"Collection Progress: {progress_line(collection_owned, collection_total)}"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Flip pages to browse the collection.")
+    return embed
+
+
+class StickerBookView(discord.ui.View):
+    def __init__(self, owner_id, target_user):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.target_user = target_user
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This sticker book view belongs to someone else. Use `/profile` to open your own view.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Welcome", emoji="🍺", style=discord.ButtonStyle.green)
+    async def welcome_collection_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, "welcome", 0),
+            view=StickerCollectionView(self.owner_id, self.target_user, "welcome", 0)
+        )
+
+    @discord.ui.button(label="Mischief", emoji="🎭", style=discord.ButtonStyle.red)
+    async def mischief_collection_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, "mischief", 0),
+            view=StickerCollectionView(self.owner_id, self.target_user, "mischief", 0)
+        )
+
+    @discord.ui.button(label="Casino", emoji="🎲", style=discord.ButtonStyle.blurple)
+    async def casino_collection_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, "casino", 0),
+            view=StickerCollectionView(self.owner_id, self.target_user, "casino", 0)
+        )
+
+    @discord.ui.button(label="Back to Profile", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_profile_embed(self.target_user),
+            view=ProfileView(self.owner_id, self.target_user)
+        )
+
+
+class StickerCollectionView(discord.ui.View):
+    def __init__(self, owner_id, target_user, collection_id, page_index):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.target_user = target_user
+        self.collection_id = collection_id
+        self.page_index = page_index
+
+        if not self.can_feature_current_sticker():
+            for item in list(self.children):
+                if getattr(item, "custom_id", None) == "feature_sticker_button":
+                    self.remove_item(item)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This sticker collection view belongs to someone else. Use `/profile` to open your own view.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    def current_sticker_id(self):
+        collection = STICKER_COLLECTIONS[self.collection_id]
+        stickers = collection["stickers"]
+        return stickers[self.page_index % len(stickers)]
+
+    def can_feature_current_sticker(self):
+        if self.owner_id != self.target_user.id:
+            return False
+
+        sticker_id = self.current_sticker_id()
+        return get_player_sticker_quantity(self.target_user.id, sticker_id) > 0
+
+    @discord.ui.button(label="Previous", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        collection = STICKER_COLLECTIONS[self.collection_id]
+        new_index = (self.page_index - 1) % len(collection["stickers"])
+
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, self.collection_id, new_index),
+            view=StickerCollectionView(self.owner_id, self.target_user, self.collection_id, new_index)
+        )
+
+    @discord.ui.button(label="Next", emoji="➡️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        collection = STICKER_COLLECTIONS[self.collection_id]
+        new_index = (self.page_index + 1) % len(collection["stickers"])
+
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, self.collection_id, new_index),
+            view=StickerCollectionView(self.owner_id, self.target_user, self.collection_id, new_index)
+        )
+
+    @discord.ui.button(label="Feature Sticker", emoji="⭐", style=discord.ButtonStyle.green, custom_id="feature_sticker_button")
+    async def feature_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sticker_id = self.current_sticker_id()
+        sticker = STICKERS[sticker_id]
+
+        if get_player_sticker_quantity(interaction.user.id, sticker_id) <= 0:
+            await interaction.response.send_message(
+                "You can only feature stickers you own.",
+                ephemeral=True
+            )
+            return
+
+        set_featured_sticker(interaction.user.id, sticker_id)
+
+        embed = build_sticker_collection_embed(self.target_user, self.collection_id, self.page_index)
+        embed.set_footer(text=f"Featured sticker set to {sticker['name']}.")
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=StickerCollectionView(self.owner_id, self.target_user, self.collection_id, self.page_index)
+        )
+
+    @discord.ui.button(label="Back to Book", emoji="📖", style=discord.ButtonStyle.blurple)
+    async def back_to_book_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_book_embed(self.target_user),
+            view=StickerBookView(self.owner_id, self.target_user)
+        )
 
 
 def build_detailed_stats_embed(target_user):
@@ -1486,7 +2123,7 @@ class ProfileView(discord.ui.View):
     async def sticker_book_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             embed=build_sticker_book_embed(self.target_user),
-            view=ProfileBackView(self.owner_id, self.target_user)
+            view=StickerBookView(self.owner_id, self.target_user)
         )
 
     @discord.ui.button(label="Detailed Stats", emoji="📊", style=discord.ButtonStyle.gray)
@@ -1590,12 +2227,8 @@ class ShopView(discord.ui.View):
     async def sticker_packs_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             content=None,
-            embed=discord.Embed(
-                title="📦 Sticker Packs",
-                description="Sticker packs are coming soon.",
-                color=discord.Color.gold()
-            ),
-            view=ShopBackView(self.owner_id)
+            embed=build_sticker_pack_shop_embed(self.owner_id),
+            view=StickerPackShopView(self.owner_id)
         )
 
     @discord.ui.button(label="Sounds", emoji="🔊", style=discord.ButtonStyle.gray)
@@ -1625,6 +2258,242 @@ class ShopBackView(discord.ui.View):
             return False
 
         return True
+
+    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(self.owner_id),
+            view=ShopView(self.owner_id)
+        )
+
+
+def build_sticker_pack_shop_embed(user_id):
+    balance = get_balance(user_id)
+    owned_total, total_stickers = get_total_sticker_progress(user_id)
+
+    pack_lines = []
+
+    for pack_id, pack in STICKER_PACKS.items():
+        pack_lines.append(
+            f"{pack['name']} — **{pack['price']:,} gold** "
+            f"({pack['pulls']} stickers)"
+        )
+
+    embed = discord.Embed(
+        title="📦 Sticker Packs",
+        description=(
+            f"💰 Gold: **{balance:,}**\n"
+            f"📖 Sticker Completion: {progress_line(owned_total, total_stickers)}\n\n"
+            f"**Available Packs:**\n"
+            f"{chr(10).join(pack_lines)}\n\n"
+            "Buy a pack to immediately open it. Duplicates stack for future trading."
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Sticker trading can be added later using duplicate counts.")
+    return embed
+
+
+def build_sticker_pack_result_embed(user_id, pack_id, pulls):
+    pack = STICKER_PACKS[pack_id]
+    lines = []
+    legendary_pulled = False
+
+    for sticker_id, old_quantity, new_quantity in pulls:
+        sticker = STICKERS[sticker_id]
+        rarity = sticker["rarity"]
+        rarity_label = get_sticker_rarity_label(sticker_id)
+
+        if rarity == "legendary":
+            legendary_pulled = True
+
+        status = "NEW!" if old_quantity == 0 else f"x{new_quantity}"
+
+        lines.append(
+            f"{rarity_label} {sticker['name']} — **{status}**"
+        )
+
+    owned_total, total_stickers = get_total_sticker_progress(user_id)
+
+    title = f"📦 Opened {pack['name']}!"
+
+    if legendary_pulled:
+        title = f"🟡 LEGENDARY PULL! {pack['name']}"
+
+    embed = discord.Embed(
+        title=title,
+        description=(
+            f"You pulled:\n"
+            f"{chr(10).join(lines)}\n\n"
+            f"Sticker Completion: {progress_line(owned_total, total_stickers)}"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Duplicates are saved for future sticker trading.")
+    return embed
+
+
+class StickerPackShopView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This sticker pack shop belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Buy Pack", emoji="📦", style=discord.ButtonStyle.green)
+    async def buy_pack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_sticker_pack_shop_embed(self.owner_id),
+            view=BuyStickerPackSelectView(self.owner_id)
+        )
+
+    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(self.owner_id),
+            view=ShopView(self.owner_id)
+        )
+
+
+class BuyStickerPackSelect(discord.ui.Select):
+    def __init__(self, owner_id):
+        self.owner_id = owner_id
+
+        options = []
+
+        for pack_id, pack in STICKER_PACKS.items():
+            options.append(
+                discord.SelectOption(
+                    label=pack["name"],
+                    description=f"{pack['price']:,} gold • {pack['pulls']} stickers",
+                    value=pack_id
+                )
+            )
+
+        super().__init__(
+            placeholder="Choose a sticker pack to buy...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        pack_id = self.values[0]
+        pack = STICKER_PACKS.get(pack_id)
+
+        if not pack:
+            await interaction.response.send_message(
+                "That sticker pack does not exist.",
+                ephemeral=True
+            )
+            return
+
+        price = pack["price"]
+        balance = get_balance(interaction.user.id)
+
+        if balance < price:
+            await interaction.response.send_message(
+                f"You need **{price:,} gold** to buy {pack['name']}.\n"
+                f"Your balance is **{balance:,} gold**.",
+                ephemeral=True
+            )
+            return
+
+        add_gold(interaction.user.id, -price)
+
+        pulls = []
+        date_collected = datetime.now(timezone.utc).isoformat()
+
+        for index in range(pack["pulls"]):
+            sticker_id = roll_sticker_from_pack(pack_id)
+            old_quantity = get_player_sticker_quantity(interaction.user.id, sticker_id)
+
+            add_player_sticker(
+                interaction.user.id,
+                sticker_id,
+                1,
+                date_collected
+            )
+
+            new_quantity = old_quantity + 1
+            pulls.append((sticker_id, old_quantity, new_quantity))
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_sticker_pack_result_embed(interaction.user.id, pack_id, pulls),
+            view=StickerPackResultView(interaction.user.id)
+        )
+
+
+class BuyStickerPackSelectView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+        self.add_item(BuyStickerPackSelect(owner_id))
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This sticker pack menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Back to Sticker Packs", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_sticker_pack_shop_embed(self.owner_id),
+            view=StickerPackShopView(self.owner_id)
+        )
+
+
+class StickerPackResultView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This sticker pack result belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Buy Another Pack", emoji="📦", style=discord.ButtonStyle.green)
+    async def buy_another_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_sticker_pack_shop_embed(self.owner_id),
+            view=BuyStickerPackSelectView(self.owner_id)
+        )
+
+    @discord.ui.button(label="View Sticker Book", emoji="📖", style=discord.ButtonStyle.blurple)
+    async def view_book_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_sticker_book_embed(interaction.user),
+            view=StickerBookView(self.owner_id, interaction.user)
+        )
 
     @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
