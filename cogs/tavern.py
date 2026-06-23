@@ -77,6 +77,7 @@ TITLE_ITEMS = {
 
 CONFETTI_DUD_GIF = os.getenv("CONFETTI_DUD_GIF", "").strip()
 STICKER_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/stickers"
+SOUND_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/sounds"
 
 MISCHIEF_ITEMS = {
     "rotten_tomato": {
@@ -90,6 +91,16 @@ MISCHIEF_ITEMS = {
     "mystery_box": {
         "name": "🎁 Mystery Box",
         "price": 1000,
+    },
+}
+
+SOUND_ITEMS = {
+    "tavern_bell": {
+        "name": "🔔 Tavern Bell",
+        "price": 2500,
+        "description": "Ring the bell and make the whole Tavern look over.",
+        "file": "tavern_bell.mp3",
+        "message": "rang the Tavern bell.",
     },
 }
 
@@ -188,6 +199,7 @@ STICKERS = {
         "quote": "This entire establishment is technically his fault.",
         "file": "trophys_fault.png",
     },
+
     "mischief_tomato_target": {
         "name": "🍅 Tomato Target",
         "rarity": "common",
@@ -620,6 +632,93 @@ def get_owned_mischief_items(user_id):
     return owned
 
 
+def get_owned_sound_items(user_id):
+    rows = get_inventory_by_type(user_id, "sound")
+
+    owned = []
+
+    for sound_id, quantity in rows:
+        if sound_id in SOUND_ITEMS and quantity > 0:
+            owned.append((sound_id, quantity))
+
+    return owned
+
+
+def get_sound_url(sound_id):
+    sound = SOUND_ITEMS.get(sound_id)
+
+    if not sound:
+        return ""
+
+    direct_url = sound.get("url", "").strip()
+    if direct_url:
+        return direct_url
+
+    file_name = sound.get("file", "").strip()
+    if not file_name:
+        return ""
+
+    return f"{SOUND_ASSET_BASE_URL}/{file_name}"
+
+
+def build_sound_play_embed(user, sound_id):
+    sound = SOUND_ITEMS.get(sound_id)
+
+    if not sound:
+        return discord.Embed(
+            title="🔊 Sound Board",
+            description="That sound does not exist.",
+            color=discord.Color.gold()
+        )
+
+    sound_url = get_sound_url(sound_id)
+
+    description = (
+        f"**{user.display_name}** {sound.get('message', 'played a sound.')}\n\n"
+        f"{sound.get('description', '')}"
+    )
+
+    if sound_url:
+        description += f"\n\n[▶️ Play Sound]({sound_url})"
+    else:
+        description += "\n\nNo sound file has been uploaded for this sound yet."
+
+    embed = discord.Embed(
+        title=f"🔊 {sound['name']}",
+        description=description,
+        color=discord.Color.gold()
+    )
+
+    return embed
+
+
+async def play_soundboard_sound(interaction, sound_id):
+    sound = SOUND_ITEMS.get(sound_id)
+
+    if not sound:
+        await interaction.response.send_message(
+            "That sound does not exist.",
+            ephemeral=True
+        )
+        return
+
+    if not player_owns_item(interaction.user.id, sound_id):
+        await interaction.response.send_message(
+            "You do not own that sound yet.",
+            ephemeral=True
+        )
+        return
+
+    embed = build_sound_play_embed(interaction.user, sound_id)
+
+    await interaction.response.send_message(
+        "🔊 Sound played.",
+        ephemeral=True
+    )
+
+    await interaction.channel.send(embed=embed)
+
+
 def get_mischief_bonus_line(item_id):
     if random.random() > 0.05:
         return ""
@@ -717,22 +816,40 @@ def build_mystery_box_embed(attacker, target):
 
 
 async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
-    owned_items = get_owned_mischief_items(interaction.user.id)
+    owned_mischief = get_owned_mischief_items(interaction.user.id)
+    owned_sounds = get_owned_sound_items(interaction.user.id)
 
-    if not owned_items:
+    if not owned_mischief and not owned_sounds:
         await interaction.response.send_message(
-            "🎭 You do not have any usable consumables yet.\n\n"
-            "Buy some from the **Mischief Market** first.\n"
-            "Sounds will be added here later.",
+            "🎭 You do not have any usable consumables or sounds yet.\n\n"
+            "Buy some from the **Mischief Market** or **Sound Shop** first.",
             ephemeral=True
         )
         return
 
+    lines = []
+
+    if owned_mischief:
+        lines.append("**🎭 Consumables**")
+        for item_id, quantity in owned_mischief:
+            item = MISCHIEF_ITEMS.get(item_id)
+            if item:
+                lines.append(f"{item['name']} x{quantity}")
+
+    if owned_sounds:
+        if lines:
+            lines.append("")
+        lines.append("**🔊 Sounds**")
+        for sound_id, quantity in owned_sounds:
+            sound = SOUND_ITEMS.get(sound_id)
+            if sound:
+                lines.append(sound["name"])
+
     embed = discord.Embed(
-        title="🎭 Use a Consumable",
+        title="🎭 Use Item / Sound",
         description=(
-            "Choose a consumable from your inventory.\n\n"
-            "Sounds will be added here later."
+            "Choose something from your Tavern inventory.\n\n"
+            f"{chr(10).join(lines)}"
         ),
         color=discord.Color.gold()
     )
@@ -741,7 +858,8 @@ async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
         embed=embed,
         view=UseConsumableSelectView(
             owner_id=interaction.user.id,
-            allowed_target_ids=allowed_target_ids
+            allowed_target_ids=allowed_target_ids,
+            include_sounds=True
         ),
         ephemeral=True
     )
@@ -1735,9 +1853,21 @@ def build_inventory_embed(target_user):
         inline=False
     )
 
+    owned_sounds = get_owned_sound_items(target_user.id)
+
+    if owned_sounds:
+        sound_lines = []
+        for sound_id, quantity in owned_sounds:
+            sound = SOUND_ITEMS.get(sound_id)
+            if sound:
+                sound_lines.append(sound["name"])
+        sound_text = "\n".join(sound_lines)
+    else:
+        sound_text = "No sounds owned."
+
     embed.add_field(
         name="🔊 Sounds",
-        value="Coming soon.",
+        value=sound_text,
         inline=False
     )
 
@@ -2271,12 +2401,310 @@ class ShopView(discord.ui.View):
     async def sounds_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             content=None,
-            embed=discord.Embed(
-                title="🔊 Sound Shop",
-                description="Sound collection is coming soon.",
-                color=discord.Color.gold()
-            ),
-            view=ShopBackView(self.owner_id)
+            embed=build_sound_shop_embed(self.owner_id),
+            view=SoundShopView(self.owner_id)
+        )
+
+
+def build_sound_shop_embed(user_id):
+    balance = get_balance(user_id)
+    owned_sounds = {sound_id for sound_id, quantity in get_owned_sound_items(user_id)}
+
+    lines = []
+
+    for sound_id, sound in SOUND_ITEMS.items():
+        if sound_id in owned_sounds:
+            lines.append(f"✅ {sound['name']} — Owned")
+        else:
+            lines.append(f"{sound['name']} — **{sound['price']:,} gold**")
+
+    embed = discord.Embed(
+        title="🔊 Sound Shop",
+        description=(
+            f"💰 Gold: **{balance:,}**\n\n"
+            f"**Available Sounds:**\n"
+            f"{chr(10).join(lines)}\n\n"
+            "Sounds are permanent unlocks. Buy once, use whenever."
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Upload sound files to assets/sounds/ and add them to SOUND_ITEMS.")
+    return embed
+
+
+def build_buy_sounds_embed(user_id):
+    balance = get_balance(user_id)
+    lines = []
+
+    for sound_id, sound in SOUND_ITEMS.items():
+        if player_owns_item(user_id, sound_id):
+            continue
+
+        lines.append(f"{sound['name']} — {sound['price']:,} gold")
+
+    available_text = "\n".join(lines) if lines else "You already own every sound."
+
+    embed = discord.Embed(
+        title="💰 Buy a Sound",
+        description=(
+            f"💰 Gold: **{balance:,}**\n\n"
+            f"{available_text}\n\n"
+            "Choose a sound from the dropdown below."
+        ),
+        color=discord.Color.gold()
+    )
+
+    return embed
+
+
+def build_use_sounds_embed(user_id):
+    owned_sounds = get_owned_sound_items(user_id)
+
+    if owned_sounds:
+        lines = []
+        for sound_id, quantity in owned_sounds:
+            sound = SOUND_ITEMS.get(sound_id)
+            if sound:
+                lines.append(sound["name"])
+        owned_text = "\n".join(lines)
+    else:
+        owned_text = "No sounds owned yet."
+
+    embed = discord.Embed(
+        title="🔊 Use a Sound",
+        description=(
+            f"**Your Sounds:**\n"
+            f"{owned_text}\n\n"
+            "Choose a sound to play it in the channel."
+        ),
+        color=discord.Color.gold()
+    )
+
+    return embed
+
+
+class SoundShopView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This sound shop belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Buy Sound", emoji="💰", style=discord.ButtonStyle.green)
+    async def buy_sound_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        available_sounds = [
+            sound_id
+            for sound_id in SOUND_ITEMS
+            if not player_owns_item(self.owner_id, sound_id)
+        ]
+
+        if not available_sounds:
+            embed = build_sound_shop_embed(self.owner_id)
+            embed.set_footer(text="You already own every sound.")
+
+            await interaction.response.edit_message(
+                content=None,
+                embed=embed,
+                view=SoundShopView(self.owner_id)
+            )
+            return
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_buy_sounds_embed(self.owner_id),
+            view=BuySoundSelectView(self.owner_id)
+        )
+
+    @discord.ui.button(label="Use Sound", emoji="🔊", style=discord.ButtonStyle.blurple)
+    async def use_sound_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        owned_sounds = get_owned_sound_items(self.owner_id)
+
+        if not owned_sounds:
+            embed = build_sound_shop_embed(self.owner_id)
+            embed.set_footer(text="You do not own any sounds yet.")
+
+            await interaction.response.edit_message(
+                content=None,
+                embed=embed,
+                view=SoundShopView(self.owner_id)
+            )
+            return
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_use_sounds_embed(self.owner_id),
+            view=UseSoundSelectView(self.owner_id)
+        )
+
+    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(self.owner_id),
+            view=ShopView(self.owner_id)
+        )
+
+
+class BuySoundSelect(discord.ui.Select):
+    def __init__(self, owner_id):
+        self.owner_id = owner_id
+
+        options = []
+
+        for sound_id, sound in SOUND_ITEMS.items():
+            if player_owns_item(owner_id, sound_id):
+                continue
+
+            options.append(
+                discord.SelectOption(
+                    label=sound["name"],
+                    description=f"{sound['price']:,} gold",
+                    value=sound_id
+                )
+            )
+
+        super().__init__(
+            placeholder="Choose a sound to buy...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        sound_id = self.values[0]
+        sound = SOUND_ITEMS.get(sound_id)
+
+        if not sound:
+            await interaction.response.send_message(
+                "That sound does not exist.",
+                ephemeral=True
+            )
+            return
+
+        if player_owns_item(interaction.user.id, sound_id):
+            await interaction.response.send_message(
+                "You already own that sound.",
+                ephemeral=True
+            )
+            return
+
+        price = sound["price"]
+        balance = get_balance(interaction.user.id)
+
+        if balance < price:
+            await interaction.response.send_message(
+                f"You need **{price:,} gold** to buy {sound['name']}.\n"
+                f"Your balance is **{balance:,} gold**.",
+                ephemeral=True
+            )
+            return
+
+        add_gold(interaction.user.id, -price)
+
+        add_inventory_item(
+            interaction.user.id,
+            sound_id,
+            "sound",
+            datetime.now(timezone.utc).isoformat()
+        )
+
+        embed = build_sound_shop_embed(interaction.user.id)
+        embed.set_footer(text=f"Purchased {sound['name']} for {price:,} gold.")
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=embed,
+            view=SoundShopView(interaction.user.id)
+        )
+
+
+class BuySoundSelectView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.add_item(BuySoundSelect(owner_id))
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This buy menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Back to Sounds", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_sound_shop_embed(self.owner_id),
+            view=SoundShopView(self.owner_id)
+        )
+
+
+class UseSoundSelect(discord.ui.Select):
+    def __init__(self, owner_id):
+        self.owner_id = owner_id
+
+        options = []
+
+        for sound_id, quantity in get_owned_sound_items(owner_id):
+            sound = SOUND_ITEMS.get(sound_id)
+            if not sound:
+                continue
+
+            options.append(
+                discord.SelectOption(
+                    label=sound["name"],
+                    description="Play this sound in the channel",
+                    value=sound_id
+                )
+            )
+
+        super().__init__(
+            placeholder="Choose a sound to play...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        sound_id = self.values[0]
+        await play_soundboard_sound(interaction, sound_id)
+
+
+class UseSoundSelectView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.add_item(UseSoundSelect(owner_id))
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This sound menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Back to Sounds", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_sound_shop_embed(self.owner_id),
+            view=SoundShopView(self.owner_id)
         )
 
 
@@ -2661,7 +3089,7 @@ class MischiefMarketView(discord.ui.View):
         await interaction.response.edit_message(
             content=None,
             embed=build_use_mischief_embed(self.owner_id),
-            view=UseConsumableSelectView(self.owner_id)
+            view=UseConsumableSelectView(self.owner_id, include_sounds=False)
         )
 
     @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
@@ -2766,11 +3194,13 @@ class BuyMischiefSelectView(discord.ui.View):
 
 
 class UseConsumableSelect(discord.ui.Select):
-    def __init__(self, owner_id, allowed_target_ids=None):
+    def __init__(self, owner_id, allowed_target_ids=None, include_sounds=True):
         self.owner_id = owner_id
         self.allowed_target_ids = allowed_target_ids
+        self.include_sounds = include_sounds
 
         owned_items = get_owned_mischief_items(owner_id)
+        owned_sounds = get_owned_sound_items(owner_id) if include_sounds else []
 
         options = []
 
@@ -2782,20 +3212,47 @@ class UseConsumableSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=item["name"],
-                    description=f"Owned: {quantity}",
-                    value=item_id
+                    description=f"Consumable • Owned: {quantity}",
+                    value=f"mischief:{item_id}"
+                )
+            )
+
+        for sound_id, quantity in owned_sounds:
+            sound = SOUND_ITEMS.get(sound_id)
+            if not sound:
+                continue
+
+            options.append(
+                discord.SelectOption(
+                    label=sound["name"],
+                    description="Sound Board • Permanent unlock",
+                    value=f"sound:{sound_id}"
                 )
             )
 
         super().__init__(
-            placeholder="Choose a consumable...",
+            placeholder="Choose an item or sound...",
             min_values=1,
             max_values=1,
             options=options
         )
 
     async def callback(self, interaction: discord.Interaction):
-        item_id = self.values[0]
+        selected = self.values[0]
+
+        if ":" not in selected:
+            await interaction.response.send_message(
+                "That item does not exist.",
+                ephemeral=True
+            )
+            return
+
+        item_type, item_id = selected.split(":", 1)
+
+        if item_type == "sound":
+            await play_soundboard_sound(interaction, item_id)
+            return
+
         item = MISCHIEF_ITEMS.get(item_id)
 
         if not item:
@@ -2824,17 +3281,18 @@ class UseConsumableSelect(discord.ui.Select):
 
 
 class UseConsumableSelectView(discord.ui.View):
-    def __init__(self, owner_id, allowed_target_ids=None):
+    def __init__(self, owner_id, allowed_target_ids=None, include_sounds=True):
         super().__init__(timeout=180)
         self.owner_id = owner_id
         self.allowed_target_ids = allowed_target_ids
+        self.include_sounds = include_sounds
 
-        self.add_item(UseConsumableSelect(owner_id, allowed_target_ids))
+        self.add_item(UseConsumableSelect(owner_id, allowed_target_ids, include_sounds))
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message(
-                "This consumable menu belongs to someone else.",
+                "This item menu belongs to someone else.",
                 ephemeral=True
             )
             return False
@@ -2843,7 +3301,7 @@ class UseConsumableSelectView(discord.ui.View):
 
     @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.allowed_target_ids is None:
+        if self.allowed_target_ids is None and not self.include_sounds:
             await interaction.response.edit_message(
                 content=None,
                 embed=build_mischief_market_embed(self.owner_id),
@@ -2853,13 +3311,14 @@ class UseConsumableSelectView(discord.ui.View):
             await interaction.response.edit_message(
                 content=None,
                 embed=discord.Embed(
-                    title="🎭 Use a Consumable",
-                    description="Choose a consumable from your inventory.",
+                    title="🎭 Use Item / Sound",
+                    description="Choose something from your Tavern inventory.",
                     color=discord.Color.gold()
                 ),
                 view=UseConsumableSelectView(
                     owner_id=self.owner_id,
-                    allowed_target_ids=self.allowed_target_ids
+                    allowed_target_ids=self.allowed_target_ids,
+                    include_sounds=self.include_sounds
                 )
             )
 
