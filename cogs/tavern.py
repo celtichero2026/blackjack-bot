@@ -79,7 +79,7 @@ TITLE_ITEMS = {
 
 CONFETTI_DUD_GIF = os.getenv("CONFETTI_DUD_GIF", "").strip()
 STICKER_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/stickers"
-SOUND_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/sounds"
+SOUND_ASSET_FOLDER = "assets/sounds"
 
 MISCHIEF_ITEMS = {
     "rotten_tomato": {
@@ -776,24 +776,21 @@ def get_owned_sound_items(user_id):
     return owned
 
 
-def get_sound_url(sound_id):
+def get_sound_file_path(sound_id):
     sound = SOUND_ITEMS.get(sound_id)
 
     if not sound:
         return ""
 
-    direct_url = sound.get("url", "").strip()
-    if direct_url:
-        return direct_url
-
     file_name = sound.get("file", "").strip()
+
     if not file_name:
         return ""
 
-    return f"{SOUND_ASSET_BASE_URL}/{file_name}"
+    return os.path.join(SOUND_ASSET_FOLDER, file_name)
 
 
-def build_sound_play_embed(user, sound_id):
+def build_sound_play_embed(user, sound_id, file_ready=True):
     sound = SOUND_ITEMS.get(sound_id)
 
     if not sound:
@@ -803,17 +800,18 @@ def build_sound_play_embed(user, sound_id):
             color=discord.Color.gold()
         )
 
-    sound_url = get_sound_url(sound_id)
-
     description = (
         f"**{user.display_name}** {sound.get('message', 'played a sound.')}\n\n"
         f"{sound.get('description', '')}"
     )
 
-    if sound_url:
-        description += f"\n\n[▶️ Play Sound]({sound_url})"
+    if file_ready:
+        description += "\n\n▶️ Press play on the attached audio below."
     else:
-        description += "\n\nNo sound file has been uploaded for this sound yet."
+        description += (
+            "\n\n⚠️ The sound file is missing from the repo. "
+            "Upload it to `assets/sounds/` and redeploy."
+        )
 
     embed = discord.Embed(
         title=f"🔊 {sound['name']}",
@@ -841,14 +839,23 @@ async def play_soundboard_sound(interaction, sound_id):
         )
         return
 
-    embed = build_sound_play_embed(interaction.user, sound_id)
+    file_path = get_sound_file_path(sound_id)
+    file_name = sound.get("file", "sound.mp3").strip() or "sound.mp3"
+    file_exists = bool(file_path and os.path.exists(file_path))
+    embed = build_sound_play_embed(interaction.user, sound_id, file_ready=file_exists)
 
     await interaction.response.send_message(
-        "🔊 Sound played.",
+        "🔊 Sound posted.",
         ephemeral=True
     )
 
-    await interaction.channel.send(embed=embed)
+    if file_exists:
+        await interaction.channel.send(
+            embed=embed,
+            file=discord.File(file_path, filename=file_name)
+        )
+    else:
+        await interaction.channel.send(embed=embed)
 
 
 def get_mischief_bonus_line(item_id):
@@ -2561,7 +2568,7 @@ def build_sound_shop_embed(user_id):
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="Upload sound files to assets/sounds/ and add them to SOUND_ITEMS.")
+    embed.set_footer(text="Upload sound files to assets/sounds/. Sounds post as playable Discord audio attachments.")
     return embed
 
 
