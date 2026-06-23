@@ -957,6 +957,40 @@ def build_sound_play_embed(user, sound_id, target=None, file_ready=True):
     return embed
 
 
+
+async def send_public_tavern_post(interaction, *, content=None, embed=None, file=None, allowed_mentions=None):
+    channel = None
+
+    if interaction.channel and hasattr(interaction.channel, "send"):
+        channel = interaction.channel
+
+    if channel is None and interaction.guild and interaction.channel_id:
+        channel = interaction.guild.get_channel(interaction.channel_id)
+
+    if channel is None and interaction.channel_id:
+        channel = interaction.client.get_channel(interaction.channel_id)
+
+    if channel is None and interaction.channel_id:
+        channel = await interaction.client.fetch_channel(interaction.channel_id)
+
+    if channel is None or not hasattr(channel, "send"):
+        raise RuntimeError("Could not find a public channel to post in.")
+
+    kwargs = {
+        "content": content,
+        "embed": embed,
+        "allowed_mentions": allowed_mentions or discord.AllowedMentions(
+            users=False,
+            roles=False,
+            everyone=False
+        )
+    }
+
+    if file:
+        kwargs["file"] = file
+
+    return await channel.send(**kwargs)
+
 async def play_soundboard_sound(interaction, sound_id, target_user=None):
     sound = SOUND_ITEMS.get(sound_id)
 
@@ -1021,10 +1055,21 @@ async def play_soundboard_sound(interaction, sound_id, target_user=None):
         )
     }
 
+    file_to_send = None
     if file_exists:
-        send_kwargs["file"] = discord.File(file_path, filename=file_name)
+        file_to_send = discord.File(file_path, filename=file_name)
 
-    await interaction.channel.send(**send_kwargs)
+    await send_public_tavern_post(
+        interaction,
+        content=content,
+        embed=embed,
+        file=file_to_send,
+        allowed_mentions=discord.AllowedMentions(
+            users=True,
+            roles=False,
+            everyone=False
+        )
+    )
 
 
 async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
@@ -4168,10 +4213,15 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
             embed = build_mischief_result_embed(interaction.user, target, self.item_id)
 
         try:
-            if interaction.channel:
-                await interaction.channel.send(embed=embed)
-            else:
-                await interaction.followup.send(embed=embed, ephemeral=False)
+            public_message = await send_public_tavern_post(
+                interaction,
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(
+                    users=False,
+                    roles=False,
+                    everyone=False
+                )
+            )
         except Exception as error:
             add_inventory_quantity(
                 interaction.user.id,
@@ -4187,7 +4237,7 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
             return
 
         await interaction.followup.send(
-            "🎭 Mischief deployed.",
+            f"🎭 Mischief deployed: {public_message.jump_url}",
             ephemeral=True
         )
 
