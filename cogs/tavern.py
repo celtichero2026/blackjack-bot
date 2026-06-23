@@ -1736,10 +1736,9 @@ async def buy_and_pour_tavern_shot(interaction, allowed_user_ids=None):
             ephemeral=True
         )
     else:
-        try:
-            await interaction.delete_original_response()
-        except Exception:
-            pass
+        # For button interactions, deleting the original response deletes the table message.
+        # The interaction was already acknowledged with defer(), so leave the table intact.
+        pass
 
 
 async def use_tavern_shot(interaction):
