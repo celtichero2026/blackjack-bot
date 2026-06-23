@@ -55,6 +55,7 @@ from achievements import ACHIEVEMENTS
 
 TROPHY_ID = 875349215876894720
 FOUNDER_ID = 502268158749573132
+SHOP_CHANNEL_ID = 1518842044020297801
 BASE_BET = 100
 DEFAULT_TITLE = "🍺 Tavern Newbie"
 
@@ -494,6 +495,14 @@ def is_tavern_channel(interaction):
     return interaction.channel_id == TAVERN_CHANNEL_ID
 
 
+def is_shop_channel(interaction):
+    return interaction.channel_id == SHOP_CHANNEL_ID
+
+
+def is_tavern_or_shop_channel(interaction):
+    return is_tavern_channel(interaction) or is_shop_channel(interaction)
+
+
 def format_hand(hand):
     return " ".join([f"{card[0]}{card[1]}" for card in hand])
 
@@ -559,7 +568,7 @@ def get_active_title(user_id):
 
 def format_table_player(player_id):
     title = get_active_title(player_id)
-    return f"- <@{player_id}> — {title}"
+    return f"- <@{player_id}> — {title}{lucky_shield_badge(player_id)}"
 
 
 
@@ -919,6 +928,41 @@ def lucky_shield_attempt_text(attempted, protected, loss_amount):
     return "\n🍀 **Lucky Shield shattered!** It failed to block the loss."
 
 
+def lucky_shield_badge(user_id):
+    active_count = get_active_lucky_shields(user_id)
+
+    if active_count <= 0:
+        return ""
+
+    if active_count == 1:
+        return " 🍀 **SHIELDED**"
+
+    return f" 🍀 **SHIELDED x{active_count}**"
+
+
+def lucky_shield_status_text(user_id):
+    active_count = get_active_lucky_shields(user_id)
+
+    if active_count <= 0:
+        return ""
+
+    shield_word = "shield" if active_count == 1 else "shields"
+
+    return (
+        f"🍀 **LUCKY SHIELD ACTIVE x{active_count}**\n"
+        f"You have **{active_count}** armed {shield_word}. Your next possible gold loss "
+        "will trigger one with a **75% chance** to block the loss."
+    )
+
+
+def lucky_shield_short_text(user_id):
+    active_count = get_active_lucky_shields(user_id)
+
+    if active_count <= 0:
+        return ""
+
+    return f"🍀 Lucky Shield active x{active_count} — 75% loss protection armed"
+
 
 def get_mischief_bonus_line(item_id):
     if random.random() > 0.05:
@@ -1221,7 +1265,8 @@ async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
     if active_shields > 0:
         if lines:
             lines.append("")
-        lines.append(f"**Active:** 🍀 Lucky Shield x{active_shields}")
+        lines.append("**🍀 ACTIVE PROTECTION**")
+        lines.append(lucky_shield_short_text(interaction.user.id))
 
     if owned_sounds:
         if lines:
@@ -1372,10 +1417,14 @@ class BlackjackGameView(discord.ui.View):
                 ):
                     marker = "⬅️ Current Turn"
 
+                shield_line = ""
+                if get_active_lucky_shields(player_id) > 0:
+                    shield_line = f"\n{lucky_shield_short_text(player_id)}"
+
                 description += (
-                    f"**<@{player_id}>{hand_label}** {marker}\n"
+                    f"**<@{player_id}>{hand_label}** {marker}{lucky_shield_badge(player_id)}\n"
                     f"{cards}\n"
-                    f"Total: **{total}** | Bet: **{bet:,} gold**\n\n"
+                    f"Total: **{total}** | Bet: **{bet:,} gold**{shield_line}\n\n"
                 )
 
         if game_over:
@@ -1972,7 +2021,7 @@ class DiceGameView(discord.ui.View):
             player_rolls = self.rolls[player_id]
             total = sum(player_rolls)
             description += (
-                f"<@{player_id}>: **{self.format_rolls(player_rolls)}** "
+                f"<@{player_id}>{lucky_shield_badge(player_id)}: **{self.format_rolls(player_rolls)}** "
                 f"= **{total}**\n"
             )
 
@@ -2016,7 +2065,7 @@ class DiceGameView(discord.ui.View):
         for player_id in self.players:
             player_rolls = self.rolls[player_id]
             roll_text = " + ".join(str(roll) for roll in player_rolls)
-            description += f"<@{player_id}> rolled **{roll_text} = {sum(player_rolls)}**\n"
+            description += f"<@{player_id}>{lucky_shield_badge(player_id)} rolled **{roll_text} = {sum(player_rolls)}**\n"
 
         if self.bot_added:
             roll_text = " + ".join(str(roll) for roll in self.bot_rolls)
@@ -2242,8 +2291,14 @@ class TavernView(discord.ui.View):
         player = get_or_create_player(interaction.user.id)
         balance = player[0]
 
+        shield_text = lucky_shield_short_text(interaction.user.id)
+        message = f"💰 You have **{balance:,} gold**."
+
+        if shield_text:
+            message += f"\n{shield_text}"
+
         await interaction.response.send_message(
-            f"💰 You have **{balance:,} gold**.",
+            message,
             ephemeral=True
         )
     @discord.ui.button(label="Shop", emoji="🏪", style=discord.ButtonStyle.gray)
@@ -2383,6 +2438,14 @@ def build_profile_embed(target_user):
         inline=True
     )
 
+    shield_text = lucky_shield_status_text(target_user.id)
+    if shield_text:
+        embed.add_field(
+            name="🍀 Active Protection",
+            value=shield_text,
+            inline=False
+        )
+
     embed.add_field(
         name="🎭 Mischief",
         value=(
@@ -2442,7 +2505,7 @@ def build_inventory_embed(target_user):
             gameplay_lines.append(f"{item['name']} x{quantity}")
 
     if active_shields > 0:
-        gameplay_lines.append(f"🍀 Active Lucky Shield x{active_shields}")
+        gameplay_lines.append(f"🍀 **ACTIVE Lucky Shield x{active_shields}** — 75% loss protection armed")
 
     gameplay_text = "\n".join(gameplay_lines) if gameplay_lines else "No gameplay consumables owned."
 
@@ -3205,6 +3268,13 @@ class SoundShopView(discord.ui.View):
 
     @discord.ui.button(label="Use Sound Attack", emoji="🔊", style=discord.ButtonStyle.blurple)
     async def use_sound_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_shop_channel(interaction):
+            await interaction.response.send_message(
+                "🔊 Sound attacks are public. Use them from The Tavern menu so the shop channel stays clean.",
+                ephemeral=True
+            )
+            return
+
         owned_sounds = get_owned_sound_items(self.owner_id)
 
         if not owned_sounds:
@@ -3814,7 +3884,7 @@ def build_mischief_market_embed(user_id):
             owned_lines.append(f"{item['name']} x{quantity}")
 
     if active_shields > 0:
-        owned_lines.append(f"🍀 Active Lucky Shield x{active_shields}")
+        owned_lines.append(f"🍀 **ACTIVE Lucky Shield x{active_shields}** — 75% loss protection armed")
 
     owned_text = "\n".join(owned_lines) if owned_lines else "No consumables owned yet."
 
@@ -3884,7 +3954,7 @@ def build_use_mischief_embed(user_id):
 
     active_shields = get_active_lucky_shields(user_id)
     if active_shields > 0:
-        lines.append(f"🍀 Active Lucky Shield x{active_shields}")
+        lines.append(f"🍀 **ACTIVE Lucky Shield x{active_shields}** — 75% loss protection armed")
 
     owned_text = "\n".join(lines) if lines else "No usable consumables owned."
 
@@ -4182,15 +4252,16 @@ class UseConsumableSelect(discord.ui.Select):
                 active_count = get_active_lucky_shields(interaction.user.id)
 
                 embed = discord.Embed(
-                    title="🍀 Lucky Shield Armed",
+                    title="🍀 LUCKY SHIELD ACTIVE",
                     description=(
-                        "Your next gold loss will trigger Lucky Shield.\n\n"
-                        "Chance to block the loss: **75%**\n"
-                        f"Active Lucky Shields: **{active_count}**"
+                        "Your next possible gold loss is now protected.\n\n"
+                        "Block chance: **75%**\n"
+                        f"Active Lucky Shields: **{active_count}**\n\n"
+                        "You will see a 🍀 **SHIELDED** badge next to your name at tables and in your inventory while it is armed."
                     ),
-                    color=discord.Color.gold()
+                    color=discord.Color.green()
                 )
-                embed.set_footer(text="It is consumed when it attempts to protect you.")
+                embed.set_footer(text="It is consumed when it attempts to protect you, whether it succeeds or shatters.")
 
                 await interaction.response.edit_message(
                     content=None,
@@ -4333,13 +4404,7 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
                 embed = build_mischief_result_embed(interaction.user, target, self.item_id)
                 mischief_stat_item_id = self.item_id
 
-            public_channel = None
-
-            if interaction.guild:
-                public_channel = interaction.guild.get_channel(TAVERN_CHANNEL_ID)
-
-            if public_channel is None:
-                public_channel = interaction.channel
+            public_channel = interaction.channel
 
             if public_channel is None:
                 await interaction.followup.send(
@@ -4939,13 +5004,12 @@ class Tavern(commands.Cog):
         
     @app_commands.command(name="shop", description="Open The Tavern shop")
     async def shop(self, interaction: discord.Interaction):
-        if not is_tavern_channel(interaction):
+        if not is_tavern_or_shop_channel(interaction):
             await interaction.response.send_message(
-                "🍺 TrophyBot only runs in **The Tavern**.",
+                "🏪 Use `/shop` in The Tavern or the Tavern shop channel.",
                 ephemeral=True
             )
             return
-
 
         await interaction.response.send_message(
             embed=build_shop_embed(interaction.user.id),
