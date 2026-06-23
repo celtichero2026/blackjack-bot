@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from achievements import ACHIEVEMENTS
-from database import award_achievement, get_profile
+from database import award_achievement, get_profile, get_math_stats
 
 
 def check_achievements(user_id: int):
@@ -26,6 +26,21 @@ def check_achievements(user_id: int):
         xp,
         *_rest
     ) = profile
+
+    math_stats = get_math_stats(user_id)
+
+    (
+        math_games_played,
+        math_daily_games_played,
+        math_correct_answers,
+        math_wrong_answers,
+        math_perfect_rounds,
+        math_medium_perfect_rounds,
+        math_hard_perfect_rounds,
+        math_best_streak,
+        math_fastest_answer_ms,
+        math_last_daily_challenge,
+    ) = math_stats
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -83,5 +98,20 @@ def check_achievements(user_id: int):
 
     if biggest_loss >= 5000:
         try_award("HOUSE_FAVORITE")
+
+    if math_games_played >= 1:
+        try_award("MATH_FIRST_BRAINCELL")
+
+    if math_correct_answers >= 10:
+        try_award("MATH_ACTUALLY_STUDYING")
+
+    if math_medium_perfect_rounds >= 1:
+        try_award("MATH_MENTAL_MENACE")
+
+    if math_hard_perfect_rounds >= 1:
+        try_award("MATH_BIG_BRAIN")
+
+    if math_fastest_answer_ms > 0 and math_fastest_answer_ms <= 3000:
+        try_award("MATH_QUICK_MATHS")
 
     return earned
