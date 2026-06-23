@@ -162,6 +162,14 @@ SHOT_GIF_FILES = [
     "shot_5.gif",
 ]
 
+SHOT_ITEMS = {
+    "tavern_shot": {
+        "name": "🥃 Tavern Shot",
+        "price": 750,
+        "description": "Instantly posts a random shot GIF in the current Tavern channel.",
+    },
+}
+
 MISCHIEF_ITEMS = {
     "rotten_tomato": {
         "name": "🍅 Rotten Tomato",
@@ -170,12 +178,6 @@ MISCHIEF_ITEMS = {
     "cream_pie": {
         "name": "🥧 Cream Pie",
         "price": 500,
-    },
-    "tavern_shot": {
-        "name": "🥃 Tavern Shot",
-        "price": 750,
-        "description": "Posts a random shot GIF in the channel.",
-        "requires_target": False,
     },
     "mystery_box": {
         "name": "🎁 Mystery Box",
@@ -1656,7 +1658,28 @@ def build_tavern_shot_embed(user):
     return embed
 
 
-async def use_tavern_shot(interaction):
+def get_tavern_shot_definition():
+    return SHOT_ITEMS["tavern_shot"]
+
+
+def get_tavern_shot_price(user_id):
+    shot = get_tavern_shot_definition()
+    return get_discounted_shop_price(user_id, shot["price"])
+
+
+def format_tavern_shot_price(user_id):
+    shot = get_tavern_shot_definition()
+    return format_shop_price(user_id, shot["price"])
+
+
+async def buy_and_pour_tavern_shot(interaction, allowed_user_ids=None):
+    if allowed_user_ids is not None and interaction.user.id not in allowed_user_ids:
+        await interaction.response.send_message(
+            "🥃 Only players sitting at this table can order a shot here.",
+            ephemeral=True
+        )
+        return
+
     if is_math_drill_active(interaction.channel_id):
         await interaction.response.send_message(
             math_focus_block_text(interaction.channel_id),
@@ -1664,9 +1687,28 @@ async def use_tavern_shot(interaction):
         )
         return
 
+    if is_shop_channel(interaction):
+        await interaction.response.send_message(
+            "🥃 Shots are public and rowdy. Use them from a Tavern table so the shop channel stays clean.",
+            ephemeral=True
+        )
+        return
+
     if interaction.channel is None:
         await interaction.response.send_message(
-            "🥃 I could not find a public channel to post the shot in. Item was not consumed.",
+            "🥃 I could not find a public channel to post the shot in. You were not charged.",
+            ephemeral=True
+        )
+        return
+
+    shot = get_tavern_shot_definition()
+    price = get_tavern_shot_price(interaction.user.id)
+    balance = get_balance(interaction.user.id)
+
+    if balance < price:
+        await interaction.response.send_message(
+            f"You need **{price:,} gold** to order {shot['name']}.\n"
+            f"Your balance is **{balance:,} gold**.",
             ephemeral=True
         )
         return
@@ -1679,35 +1721,29 @@ async def use_tavern_shot(interaction):
         public_message = await interaction.channel.send(embed=embed)
     except Exception as error:
         await interaction.followup.send(
-            f"🥃 Shot failed before consuming your item: `{error}`",
+            f"🥃 Shot failed before charging you: `{error}`",
             ephemeral=True
         )
         return
 
-    quantity_removed = consume_inventory_item(
-        interaction.user.id,
-        "tavern_shot",
-        1
-    )
-
-    if not quantity_removed:
-        try:
-            await public_message.delete()
-        except Exception:
-            pass
-
-        await interaction.followup.send(
-            "You do not have a Tavern Shot anymore.",
-            ephemeral=True
-        )
-        return
+    add_gold(interaction.user.id, -price)
+    new_balance = get_balance(interaction.user.id)
 
     if item_confirmations_enabled():
         await interaction.followup.send(
-            f"🥃 Shot poured: {public_message.jump_url}",
+            f"🥃 Shot poured for **{price:,} gold**: {public_message.jump_url}\n"
+            f"💰 New balance: **{new_balance:,} gold**.",
             ephemeral=True
         )
+    else:
+        try:
+            await interaction.delete_original_response()
+        except Exception:
+            pass
 
+
+async def use_tavern_shot(interaction):
+    await buy_and_pour_tavern_shot(interaction)
 
 def get_sound_file_path(sound_id):
     sound = SOUND_ITEMS.get(sound_id)
@@ -2190,6 +2226,13 @@ class BlackjackGameView(discord.ui.View):
 
         await send_level_up_messages(interaction, self.level_ups)
 
+    @discord.ui.button(label="Take Shot", emoji="🥃", style=discord.ButtonStyle.secondary)
+    async def take_shot_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await buy_and_pour_tavern_shot(
+            interaction,
+            allowed_user_ids=self.players
+        )
+
     @discord.ui.button(label="Hit", emoji="🃏", style=discord.ButtonStyle.green)
     async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.current_player_id():
@@ -2384,6 +2427,13 @@ class BlackjackTableView(discord.ui.View):
         )
 
 
+    @discord.ui.button(label="Take Shot", emoji="🥃", style=discord.ButtonStyle.secondary)
+    async def take_shot_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await buy_and_pour_tavern_shot(
+            interaction,
+            allowed_user_ids=self.players
+        )
+
     @discord.ui.button(label="Use Consumable", emoji="🎭", style=discord.ButtonStyle.secondary)
     async def use_consumable_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await send_usable_inventory_menu(
@@ -2523,6 +2573,13 @@ class DiceTableView(discord.ui.View):
         await interaction.response.edit_message(
             embed=self.build_table_embed(),
             view=self
+        )
+
+    @discord.ui.button(label="Take Shot", emoji="🥃", style=discord.ButtonStyle.secondary)
+    async def take_shot_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await buy_and_pour_tavern_shot(
+            interaction,
+            allowed_user_ids=self.players
         )
 
     @discord.ui.button(label="Use Consumable", emoji="🎭", style=discord.ButtonStyle.secondary)
@@ -2807,6 +2864,13 @@ class DiceGameView(discord.ui.View):
             title="🎲 Dice Results",
             description=description,
             color=discord.Color.dark_gold()
+        )
+
+    @discord.ui.button(label="Take Shot", emoji="🥃", style=discord.ButtonStyle.secondary)
+    async def take_shot_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await buy_and_pour_tavern_shot(
+            interaction,
+            allowed_user_ids=self.players
         )
 
     @discord.ui.button(label="Roll", emoji="🎲", style=discord.ButtonStyle.red)
@@ -4326,6 +4390,14 @@ class ShopView(discord.ui.View):
             view=MischiefMarketView(self.owner_id)
         )
 
+    @discord.ui.button(label="Shots", emoji="🥃", style=discord.ButtonStyle.gray)
+    async def shots_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shot_bar_embed(self.owner_id),
+            view=ShotBarView(self.owner_id)
+        )
+
     @discord.ui.button(label="Titles", emoji="🎖", style=discord.ButtonStyle.blurple)
     async def titles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
@@ -4348,6 +4420,54 @@ class ShopView(discord.ui.View):
             content=None,
             embed=build_sound_shop_embed(self.owner_id),
             view=SoundShopView(self.owner_id)
+        )
+
+
+def build_shot_bar_embed(user_id):
+    balance = get_balance(user_id)
+    shot = get_tavern_shot_definition()
+
+    embed = discord.Embed(
+        title="🥃 Shot Bar",
+        description=(
+            f"💰 Gold: **{balance:,}**\n\n"
+            f"**{shot['name']}** — **{format_tavern_shot_price(user_id)}**\n"
+            f"{shot['description']}\n\n"
+            "Shots are **instant use**. They do not go into your inventory.\n"
+            "Use them from a Tavern table before or during a game."
+        ),
+        color=discord.Color.dark_gold()
+    )
+
+    embed.set_footer(text="Shots post publicly. The shop channel stays clean.")
+    return embed
+
+
+class ShotBarView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This Shot Bar menu belongs to someone else. Use `/shop` to open your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Pour Shot", emoji="🥃", style=discord.ButtonStyle.green)
+    async def pour_shot_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await buy_and_pour_tavern_shot(interaction)
+
+    @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_shop_embed(self.owner_id),
+            view=ShopView(self.owner_id)
         )
 
 
@@ -5113,7 +5233,7 @@ def build_mischief_market_embed(user_id):
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="Consumables are for chaos. Shots post a random GIF. Lucky Shield protects your next possible gold loss.")
+    embed.set_footer(text="Consumables are for chaos. Lucky Shield protects your next possible gold loss.")
     return embed
 
 
@@ -5491,10 +5611,6 @@ class UseConsumableSelect(discord.ui.Select):
                 "That consumable does not exist.",
                 ephemeral=True
             )
-            return
-
-        if item_id == "tavern_shot":
-            await use_tavern_shot(interaction)
             return
 
         if item.get("requires_target", True) is False:
