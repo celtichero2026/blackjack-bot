@@ -957,40 +957,6 @@ def build_sound_play_embed(user, sound_id, target=None, file_ready=True):
     return embed
 
 
-
-async def send_public_tavern_post(interaction, *, content=None, embed=None, file=None, allowed_mentions=None):
-    channel = None
-
-    if interaction.channel and hasattr(interaction.channel, "send"):
-        channel = interaction.channel
-
-    if channel is None and interaction.guild and interaction.channel_id:
-        channel = interaction.guild.get_channel(interaction.channel_id)
-
-    if channel is None and interaction.channel_id:
-        channel = interaction.client.get_channel(interaction.channel_id)
-
-    if channel is None and interaction.channel_id:
-        channel = await interaction.client.fetch_channel(interaction.channel_id)
-
-    if channel is None or not hasattr(channel, "send"):
-        raise RuntimeError("Could not find a public channel to post in.")
-
-    kwargs = {
-        "content": content,
-        "embed": embed,
-        "allowed_mentions": allowed_mentions or discord.AllowedMentions(
-            users=False,
-            roles=False,
-            everyone=False
-        )
-    }
-
-    if file:
-        kwargs["file"] = file
-
-    return await channel.send(**kwargs)
-
 async def play_soundboard_sound(interaction, sound_id, target_user=None):
     sound = SOUND_ITEMS.get(sound_id)
 
@@ -1055,21 +1021,10 @@ async def play_soundboard_sound(interaction, sound_id, target_user=None):
         )
     }
 
-    file_to_send = None
     if file_exists:
-        file_to_send = discord.File(file_path, filename=file_name)
+        send_kwargs["file"] = discord.File(file_path, filename=file_name)
 
-    await send_public_tavern_post(
-        interaction,
-        content=content,
-        embed=embed,
-        file=file_to_send,
-        allowed_mentions=discord.AllowedMentions(
-            users=True,
-            roles=False,
-            everyone=False
-        )
-    )
+    await interaction.channel.send(**send_kwargs)
 
 
 async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
@@ -4175,71 +4130,103 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        target = self.values[0]
-
-        if self.allowed_target_ids is not None and target.id not in self.allowed_target_ids:
-            await interaction.response.send_message(
-                "That player is not sitting at this table.",
-                ephemeral=True
-            )
-            return
-
-        if target.bot:
-            await interaction.response.send_message(
-                "The Tavern Bot refuses to be bullied by its own customers.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.defer(ephemeral=True)
-
-        quantity_removed = consume_inventory_item(
-            interaction.user.id,
-            self.item_id,
-            1
-        )
-
-        if not quantity_removed:
-            await interaction.followup.send(
-                "You do not have that consumable anymore.",
-                ephemeral=True
-            )
-            return
-
-        if self.item_id == "mystery_box":
-            embed = build_mystery_box_embed(interaction.user, target)
-        else:
-            record_mischief_hit(interaction.user.id, target.id, self.item_id)
-            embed = build_mischief_result_embed(interaction.user, target, self.item_id)
-
         try:
-            public_message = await send_public_tavern_post(
-                interaction,
-                embed=embed,
-                allowed_mentions=discord.AllowedMentions(
-                    users=False,
-                    roles=False,
-                    everyone=False
+            target = self.values[0]
+
+            if interaction.user.id != self.owner_id:
+                await interaction.response.send_message(
+                    "This target menu belongs to someone else.",
+                    ephemeral=True
                 )
-            )
-        except Exception as error:
-            add_inventory_quantity(
+                return
+
+            if self.allowed_target_ids is not None and target.id not in self.allowed_target_ids:
+                await interaction.response.send_message(
+                    "That player is not sitting at this table.",
+                    ephemeral=True
+                )
+                return
+
+            if target.bot:
+                await interaction.response.send_message(
+                    "The Tavern Bot refuses to be bullied by its own customers.",
+                    ephemeral=True
+                )
+                return
+
+            if get_inventory_by_type(interaction.user.id, "mischief") is None:
+                await interaction.response.send_message(
+                    "Could not read your consumable inventory.",
+                    ephemeral=True
+                )
+                return
+
+            # Acknowledge the target click first so Discord does not silently time out.
+            await interaction.response.defer(ephemeral=True)
+
+            # Build the public result before consuming anything.
+            if self.item_id == "mystery_box":
+                embed = build_mystery_box_embed(interaction.user, target)
+            else:
+                embed = build_mischief_result_embed(interaction.user, target, self.item_id)
+
+            public_channel = None
+
+            if interaction.guild:
+                public_channel = interaction.guild.get_channel(TAVERN_CHANNEL_ID)
+
+            if public_channel is None:
+                public_channel = interaction.channel
+
+            if public_channel is None:
+                await interaction.followup.send(
+                    "🎭 I could not find a public channel to post the mischief in. Item was not consumed.",
+                    ephemeral=True
+                )
+                return
+
+            # Send the public embed first. If this fails, do not consume the item.
+            public_message = await public_channel.send(embed=embed)
+
+            quantity_removed = consume_inventory_item(
                 interaction.user.id,
                 self.item_id,
-                "mischief",
-                1,
-                datetime.now(timezone.utc).isoformat()
+                1
             )
+
+            if not quantity_removed:
+                try:
+                    await public_message.delete()
+                except Exception:
+                    pass
+
+                await interaction.followup.send(
+                    "You do not have that consumable anymore.",
+                    ephemeral=True
+                )
+                return
+
+            if self.item_id != "mystery_box":
+                record_mischief_hit(interaction.user.id, target.id, self.item_id)
+
             await interaction.followup.send(
-                f"🎭 The item was refunded because the public mischief post failed: `{error}`",
+                f"🎭 Mischief deployed: {public_message.jump_url}",
                 ephemeral=True
             )
-            return
 
-        await interaction.followup.send(
-            f"🎭 Mischief deployed: {public_message.jump_url}",
-            ephemeral=True
-        )
+        except Exception as error:
+            import traceback
+            traceback.print_exception(type(error), error, error.__traceback__)
+
+            message = f"🎭 Mischief failed before consuming your item: `{error}`"
+
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(message, ephemeral=True)
+                else:
+                    await interaction.response.send_message(message, ephemeral=True)
+            except Exception:
+                pass
 
 
 class UseConsumableTargetView(discord.ui.View):
@@ -4266,6 +4253,17 @@ class UseConsumableTargetView(discord.ui.View):
             return False
 
         return True
+
+    async def on_error(self, interaction, error, item):
+        import traceback
+        traceback.print_exception(type(error), error, error.__traceback__)
+
+        message = f"Mischief target menu error: `{error}`"
+
+        if interaction.response.is_done():
+            await interaction.followup.send(message, ephemeral=True)
+        else:
+            await interaction.response.send_message(message, ephemeral=True)
 
     @discord.ui.button(label="Back to Consumables", emoji="⬅️", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
