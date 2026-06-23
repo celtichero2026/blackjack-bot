@@ -149,6 +149,15 @@ def setup_database():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sticker_pack_settings (
+            pack_id TEXT PRIMARY KEY,
+            purchase_enabled INTEGER DEFAULT 1,
+            tavern_mix_enabled INTEGER DEFAULT 1,
+            updated_at TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -909,4 +918,54 @@ def get_featured_sticker(user_id: int):
         return ""
 
     return row[0]
+
+def get_sticker_pack_setting(pack_id: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT purchase_enabled, tavern_mix_enabled
+        FROM sticker_pack_settings
+        WHERE pack_id = ?
+        """,
+        (pack_id,)
+    )
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    return row
+
+
+def set_sticker_pack_setting(
+    pack_id: str,
+    purchase_enabled: bool,
+    tavern_mix_enabled: bool,
+    updated_at: str
+):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO sticker_pack_settings
+        (pack_id, purchase_enabled, tavern_mix_enabled, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(pack_id) DO UPDATE SET
+            purchase_enabled = excluded.purchase_enabled,
+            tavern_mix_enabled = excluded.tavern_mix_enabled,
+            updated_at = excluded.updated_at
+        """,
+        (
+            pack_id,
+            1 if purchase_enabled else 0,
+            1 if tavern_mix_enabled else 0,
+            updated_at,
+        )
+    )
+
+    conn.commit()
+    conn.close()
 
