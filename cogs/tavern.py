@@ -3894,11 +3894,12 @@ class HangmanLobbyView(discord.ui.View):
 
 
 class HangmanLetterButton(discord.ui.Button):
-    def __init__(self, letter):
+    def __init__(self, letter, row=None):
         super().__init__(
             label=letter,
             style=discord.ButtonStyle.secondary,
-            custom_id=f"hangman_letter_{letter}_{random.randint(1, 999999)}"
+            custom_id=f"hangman_letter_{letter}_{random.randint(1, 999999)}",
+            row=row
         )
         self.letter = letter.lower()
 
@@ -3907,14 +3908,15 @@ class HangmanLetterButton(discord.ui.Button):
 
 
 class HangmanPageButton(discord.ui.Button):
-    def __init__(self, target_page):
+    def __init__(self, target_page, row=4):
         label = "Consonants" if target_page == "consonants" else "Vowels"
         emoji = "🔤" if target_page == "consonants" else "🅰️"
         super().__init__(
             label=label,
             emoji=emoji,
             style=discord.ButtonStyle.blurple,
-            custom_id=f"hangman_page_{target_page}_{random.randint(1, 999999)}"
+            custom_id=f"hangman_page_{target_page}_{random.randint(1, 999999)}",
+            row=row
         )
         self.target_page = target_page
 
@@ -3947,19 +3949,22 @@ class HangmanPageButton(discord.ui.Button):
 
         self.view.page = self.target_page
         self.view.refresh_letter_buttons()
-        await interaction.response.edit_message(
+
+        await interaction.response.defer(thinking=False)
+        await interaction.message.edit(
             embed=self.view.build_game_embed(),
             view=self.view
         )
 
 
 class HangmanQuitButton(discord.ui.Button):
-    def __init__(self):
+    def __init__(self, row=4):
         super().__init__(
             label="End Game",
             emoji="✖️",
             style=discord.ButtonStyle.red,
-            custom_id=f"hangman_quit_{random.randint(1, 999999)}"
+            custom_id=f"hangman_quit_{random.randint(1, 999999)}",
+            row=row
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -4028,14 +4033,20 @@ class HangmanGameView(discord.ui.View):
         self.clear_items()
         letters = HANGMAN_VOWELS if self.page == "vowels" else HANGMAN_CONSONANTS
 
+        # Explicit rows keep Discord from trying to reshuffle a full consonant page
+        # and makes page swapping much more reliable. Row 4 is reserved for controls.
+        button_index = 0
         for letter in letters:
             if letter.lower() in self.guessed_letters:
                 continue
-            self.add_item(HangmanLetterButton(letter))
+
+            row = min(button_index // 5, 3)
+            self.add_item(HangmanLetterButton(letter, row=row))
+            button_index += 1
 
         next_page = "consonants" if self.page == "vowels" else "vowels"
-        self.add_item(HangmanPageButton(next_page))
-        self.add_item(HangmanQuitButton())
+        self.add_item(HangmanPageButton(next_page, row=4))
+        self.add_item(HangmanQuitButton(row=4))
 
     def build_game_embed(self, result_text=""):
         board = hangman_board_text(self.word, self.guessed_letters)
