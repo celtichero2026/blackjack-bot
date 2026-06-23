@@ -3921,24 +3921,36 @@ class HangmanPageButton(discord.ui.Button):
         self.target_page = target_page
 
     async def callback(self, interaction: discord.Interaction):
-        if HANGMAN_ACTIVE_CHANNELS.get(self.view.channel_id) is not self.view:
+        # Store the view immediately. refresh_letter_buttons() clears/rebuilds the view,
+        # which detaches this old button from self.view. Referencing self.view after that
+        # causes an exception and Discord shows "Interaction failed."
+        view = self.view
+
+        if view is None:
+            await interaction.response.send_message(
+                "This Hangman button is stale. Start a fresh Hangman table.",
+                ephemeral=True
+            )
+            return
+
+        if HANGMAN_ACTIVE_CHANNELS.get(view.channel_id) is not view:
             await interaction.response.send_message(
                 "This Hangman game is no longer active.",
                 ephemeral=True
             )
             return
 
-        if self.view.finished:
+        if view.finished:
             await interaction.response.send_message(
                 "This Hangman game is already finished.",
                 ephemeral=True
             )
             return
 
-        allowed_page_users = set(self.view.guessers)
-        allowed_page_users.add(self.view.host_id)
-        if self.view.undertaker_id:
-            allowed_page_users.add(self.view.undertaker_id)
+        allowed_page_users = set(view.guessers)
+        allowed_page_users.add(view.host_id)
+        if view.undertaker_id:
+            allowed_page_users.add(view.undertaker_id)
 
         if interaction.user.id not in allowed_page_users:
             await interaction.response.send_message(
@@ -3947,13 +3959,12 @@ class HangmanPageButton(discord.ui.Button):
             )
             return
 
-        self.view.page = self.target_page
-        self.view.refresh_letter_buttons()
+        view.page = self.target_page
+        view.refresh_letter_buttons()
 
-        await interaction.response.defer(thinking=False)
-        await interaction.message.edit(
-            embed=self.view.build_game_embed(),
-            view=self.view
+        await interaction.response.edit_message(
+            embed=view.build_game_embed(),
+            view=view
         )
 
 
@@ -3968,14 +3979,26 @@ class HangmanQuitButton(discord.ui.Button):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.view.host_id:
+        view = self.view
+
+        if view is None:
+            await interaction.response.send_message(
+                "This Hangman button is stale. Start a fresh Hangman table.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.id != view.host_id:
             await interaction.response.send_message(
                 "Only the host can end this Hangman game.",
                 ephemeral=True
             )
             return
 
-        HANGMAN_ACTIVE_CHANNELS.pop(self.view.channel_id, None)
+        view.finished = True
+        HANGMAN_ACTIVE_CHANNELS.pop(view.channel_id, None)
+        view.clear_items()
+
         await interaction.response.edit_message(
             embed=discord.Embed(
                 title="🪦 Hangman Ended",
