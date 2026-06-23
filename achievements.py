@@ -19,4 +19,9 @@ ACHIEVEMENTS = {
     "HIGH_ROLLER": {"name": "💎 High Roller", "description": "Wager 5,000 gold."},
     "HOUSE_FAVORITE": {"name": "😈 The House's Favorite", "description": "Lose 5,000 gold."},
     "FOUNDER": {"name": "🏆 Founder of The Tavern", "description": "The one responsible for everyone's gambling addiction."},
+    "MATH_FIRST_BRAINCELL": {"name": "🧠 First Braincell", "description": "Complete your first Math Drill."},
+    "MATH_ACTUALLY_STUDYING": {"name": "📚 Actually Studying", "description": "Get 10 correct Math Drill answers."},
+    "MATH_MENTAL_MENACE": {"name": "🔥 Mental Math Menace", "description": "Get 5/5 on a Medium Math Drill."},
+    "MATH_BIG_BRAIN": {"name": "👑 Big Brain at the Bar", "description": "Get 5/5 on a Hard Math Drill."},
+    "MATH_QUICK_MATHS": {"name": "⚡ Quick Maths", "description": "Answer a Math Drill question correctly in under 3 seconds."},
 }
