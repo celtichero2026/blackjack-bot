@@ -863,6 +863,107 @@ def lucky_shield_attempt_text(attempted, protected, loss_amount):
 
     return "\n🍀 **Lucky Shield shattered!** It failed to block the loss."
 
+
+
+def get_mischief_bonus_line(item_id):
+    if random.random() > 0.05:
+        return ""
+
+    if item_id == "rotten_tomato":
+        return "\n\n💦 Oof, that one was extra juicy."
+
+    if item_id == "cream_pie":
+        return random.choice([
+            "\n\n😳 The Tavern will not be commenting on where the whipped cream ended up.",
+            "\n\n🫣 That pie hit dangerously close to HR territory.",
+            "\n\n🥴 Someone get a towel. Actually... get two.",
+            "\n\n😏 That was a very questionable use of dairy.",
+            "\n\n🍰 The pie was consensual. The cleanup was not.",
+        ])
+
+    return ""
+
+
+def build_mischief_result_embed(attacker, target, item_id):
+    if item_id == "rotten_tomato":
+        description = (
+            f"**{attacker.display_name}** launched a rotten tomato at "
+            f"**{target.display_name}**."
+        )
+        description += get_mischief_bonus_line(item_id)
+
+        embed = discord.Embed(
+            title="🍅 Rotten Tomato!",
+            description=description,
+            color=discord.Color.red()
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+        return embed
+
+    if item_id == "cream_pie":
+        description = (
+            f"**{attacker.display_name}** hit **{target.display_name}** "
+            "with a cream pie."
+        )
+        description += get_mischief_bonus_line(item_id)
+
+        embed = discord.Embed(
+            title="🥧 Cream Pie!",
+            description=description,
+            color=discord.Color.gold()
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+        return embed
+
+    embed = discord.Embed(
+        title="🎭 Mischief!",
+        description="Something questionable happened.",
+        color=discord.Color.gold()
+    )
+    return embed
+
+
+def build_mystery_box_result(attacker, target):
+    outcome = random.choices(
+        ["rotten_tomato", "cream_pie", "backfire", "confetti"],
+        weights=[35, 35, 15, 15],
+        k=1
+    )[0]
+
+    if outcome in ["rotten_tomato", "cream_pie"]:
+        return build_mischief_result_embed(attacker, target, outcome), outcome
+
+    if outcome == "backfire":
+        embed = discord.Embed(
+            title="💥 Mystery Box Backfire!",
+            description=(
+                f"**{attacker.display_name}** opened the Mystery Box...\n\n"
+                "It immediately exploded in their face."
+            ),
+            color=discord.Color.dark_red()
+        )
+        embed.set_thumbnail(url=attacker.display_avatar.url)
+        return embed, None
+
+    embed = discord.Embed(
+        title="✨ Confetti Dud!",
+        description=(
+            f"**{attacker.display_name}** opened the Mystery Box...\n\n"
+            "A sad little puff of confetti fell out. That was it."
+        ),
+        color=discord.Color.light_grey()
+    )
+
+    if CONFETTI_DUD_GIF:
+        embed.set_image(url=CONFETTI_DUD_GIF)
+
+    return embed, None
+
+
+def build_mystery_box_embed(attacker, target):
+    embed, stat_item_id = build_mystery_box_result(attacker, target)
+    return embed
+
 def get_sound_file_path(sound_id):
     sound = SOUND_ITEMS.get(sound_id)
 
@@ -4165,10 +4266,14 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
             await interaction.response.defer(ephemeral=True)
 
             # Build the public result before consuming anything.
+            # Mystery Box returns the actual effect so stats only update after the public post succeeds.
+            mischief_stat_item_id = None
+
             if self.item_id == "mystery_box":
-                embed = build_mystery_box_embed(interaction.user, target)
+                embed, mischief_stat_item_id = build_mystery_box_result(interaction.user, target)
             else:
                 embed = build_mischief_result_embed(interaction.user, target, self.item_id)
+                mischief_stat_item_id = self.item_id
 
             public_channel = None
 
@@ -4206,8 +4311,8 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
                 )
                 return
 
-            if self.item_id != "mystery_box":
-                record_mischief_hit(interaction.user.id, target.id, self.item_id)
+            if mischief_stat_item_id:
+                record_mischief_hit(interaction.user.id, target.id, mischief_stat_item_id)
 
             await interaction.followup.send(
                 f"🎭 Mischief deployed: {public_message.jump_url}",
