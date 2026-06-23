@@ -109,6 +109,7 @@ def setup_database():
         "pies_thrown": "INTEGER DEFAULT 0",
         "pies_taken": "INTEGER DEFAULT 0",
         "featured_sticker_id": "TEXT DEFAULT ''",
+        "title_changed_at": "TEXT DEFAULT ''",
     }
 
     for column, definition in extra_columns.items():
@@ -583,6 +584,57 @@ def set_player_title(user_id: int, title: str):
         WHERE user_id = ?
         """,
         (title, str(user_id))
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_title_changed_at(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        """
+        SELECT title_changed_at
+        FROM players
+        WHERE user_id = ?
+        """,
+        (str(user_id),)
+    )
+
+    row = cur.fetchone()
+
+    conn.commit()
+    conn.close()
+
+    if not row:
+        return ""
+
+    return row[0] or ""
+
+
+def set_title_changed_at(user_id: int, changed_at: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        "INSERT OR IGNORE INTO players (user_id) VALUES (?)",
+        (str(user_id),)
+    )
+
+    cur.execute(
+        """
+        UPDATE players
+        SET title_changed_at = ?
+        WHERE user_id = ?
+        """,
+        (changed_at, str(user_id))
     )
 
     conn.commit()
