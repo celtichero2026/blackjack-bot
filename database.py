@@ -158,6 +158,16 @@ def setup_database():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS player_effects (
+            user_id TEXT,
+            effect_id TEXT,
+            quantity INTEGER DEFAULT 1,
+            updated_at TEXT,
+            PRIMARY KEY (user_id, effect_id)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -697,6 +707,112 @@ def get_inventory_by_type(user_id: int, item_type: str):
 
     return rows
 
+
+
+def add_player_effect(user_id: int, effect_id: str, amount: int = 1, updated_at: str = ""):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT quantity
+        FROM player_effects
+        WHERE user_id = ? AND effect_id = ?
+        """,
+        (str(user_id), effect_id)
+    )
+
+    row = cur.fetchone()
+
+    if row:
+        cur.execute(
+            """
+            UPDATE player_effects
+            SET quantity = quantity + ?, updated_at = ?
+            WHERE user_id = ? AND effect_id = ?
+            """,
+            (amount, updated_at, str(user_id), effect_id)
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO player_effects
+            (user_id, effect_id, quantity, updated_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (str(user_id), effect_id, amount, updated_at)
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def get_player_effect_quantity(user_id: int, effect_id: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT quantity
+        FROM player_effects
+        WHERE user_id = ? AND effect_id = ?
+        """,
+        (str(user_id), effect_id)
+    )
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    if not row:
+        return 0
+
+    return row[0]
+
+
+def consume_player_effect(user_id: int, effect_id: str, amount: int = 1):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT quantity
+        FROM player_effects
+        WHERE user_id = ? AND effect_id = ?
+        """,
+        (str(user_id), effect_id)
+    )
+
+    row = cur.fetchone()
+
+    if not row or row[0] < amount:
+        conn.close()
+        return False
+
+    new_quantity = row[0] - amount
+
+    if new_quantity <= 0:
+        cur.execute(
+            """
+            DELETE FROM player_effects
+            WHERE user_id = ? AND effect_id = ?
+            """,
+            (str(user_id), effect_id)
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE player_effects
+            SET quantity = ?
+            WHERE user_id = ? AND effect_id = ?
+            """,
+            (new_quantity, str(user_id), effect_id)
+        )
+
+    conn.commit()
+    conn.close()
+
+    return True
 
 
 def record_mischief_hit(attacker_id: int, target_id: int, item_id: str):
