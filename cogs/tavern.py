@@ -151,7 +151,16 @@ DAILY_MATH_CHALLENGE_GOLD = 100
 
 CONFETTI_DUD_GIF = os.getenv("CONFETTI_DUD_GIF", "").strip()
 STICKER_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/stickers"
+GIF_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/gifs"
 SOUND_ASSET_FOLDER = "assets/sounds"
+
+SHOT_GIF_FILES = [
+    "shot_1.gif",
+    "shot_2.gif",
+    "shot_3.gif",
+    "shot_4.gif",
+    "shot_5.gif",
+]
 
 MISCHIEF_ITEMS = {
     "rotten_tomato": {
@@ -161,6 +170,12 @@ MISCHIEF_ITEMS = {
     "cream_pie": {
         "name": "🥧 Cream Pie",
         "price": 500,
+    },
+    "tavern_shot": {
+        "name": "🥃 Tavern Shot",
+        "price": 750,
+        "description": "Posts a random shot GIF in the channel.",
+        "requires_target": False,
     },
     "mystery_box": {
         "name": "🎁 Mystery Box",
@@ -1601,6 +1616,99 @@ def build_mystery_box_embed(attacker, target):
     embed, stat_item_id = build_mystery_box_result(attacker, target)
     return embed
 
+def get_shot_gif_url():
+    if not SHOT_GIF_FILES:
+        return ""
+
+    file_name = random.choice(SHOT_GIF_FILES).strip()
+
+    if not file_name:
+        return ""
+
+    return f"{GIF_ASSET_BASE_URL}/shots/{file_name}"
+
+
+def build_tavern_shot_embed(user):
+    shot_lines = [
+        "The Tavern poured a shot. Questionable decisions may follow.",
+        "A shot has entered the chat. Hydration has left it.",
+        "The bartender has stopped asking questions.",
+        "One tiny glass. One large mistake.",
+        "The Tavern acknowledges this as a liquid bad idea.",
+        "Someone yelled shots and unfortunately the bot listened.",
+    ]
+
+    embed = discord.Embed(
+        title="🥃 Tavern Shot!",
+        description=(
+            f"**{user.display_name}** took a Tavern shot.\n\n"
+            f"{random.choice(shot_lines)}"
+        ),
+        color=discord.Color.dark_gold()
+    )
+
+    gif_url = get_shot_gif_url()
+
+    if gif_url:
+        embed.set_image(url=gif_url)
+
+    embed.set_footer(text="Shot GIFs are pulled from the GitHub repo.")
+    return embed
+
+
+async def use_tavern_shot(interaction):
+    if is_math_drill_active(interaction.channel_id):
+        await interaction.response.send_message(
+            math_focus_block_text(interaction.channel_id),
+            ephemeral=True
+        )
+        return
+
+    if interaction.channel is None:
+        await interaction.response.send_message(
+            "🥃 I could not find a public channel to post the shot in. Item was not consumed.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    embed = build_tavern_shot_embed(interaction.user)
+
+    try:
+        public_message = await interaction.channel.send(embed=embed)
+    except Exception as error:
+        await interaction.followup.send(
+            f"🥃 Shot failed before consuming your item: `{error}`",
+            ephemeral=True
+        )
+        return
+
+    quantity_removed = consume_inventory_item(
+        interaction.user.id,
+        "tavern_shot",
+        1
+    )
+
+    if not quantity_removed:
+        try:
+            await public_message.delete()
+        except Exception:
+            pass
+
+        await interaction.followup.send(
+            "You do not have a Tavern Shot anymore.",
+            ephemeral=True
+        )
+        return
+
+    if item_confirmations_enabled():
+        await interaction.followup.send(
+            f"🥃 Shot poured: {public_message.jump_url}",
+            ephemeral=True
+        )
+
+
 def get_sound_file_path(sound_id):
     sound = SOUND_ITEMS.get(sound_id)
 
@@ -1831,7 +1939,7 @@ async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="Mischief and sounds are public. Lucky Shield arms your next possible loss.")
+    embed.set_footer(text="Consumables and sounds are public. Lucky Shield arms your next possible loss.")
 
     await interaction.response.send_message(
         embed=embed,
@@ -5005,7 +5113,7 @@ def build_mischief_market_embed(user_id):
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="Mischief is for chaos. Lucky Shield protects your next possible gold loss.")
+    embed.set_footer(text="Consumables are for chaos. Shots post a random GIF. Lucky Shield protects your next possible gold loss.")
     return embed
 
 
@@ -5133,10 +5241,11 @@ class BuyMischiefSelect(discord.ui.Select):
         options = []
 
         for item_id, item in MISCHIEF_ITEMS.items():
+            item_label = item.get("description", "Mischief item")
             options.append(
                 discord.SelectOption(
                     label=item["name"],
-                    description=f"Mischief • {format_shop_price(owner_id, item['price'])}",
+                    description=f"{item_label} • {format_shop_price(owner_id, item['price'])}",
                     value=f"mischief:{item_id}"
                 )
             )
@@ -5380,6 +5489,17 @@ class UseConsumableSelect(discord.ui.Select):
         if not item:
             await interaction.response.send_message(
                 "That consumable does not exist.",
+                ephemeral=True
+            )
+            return
+
+        if item_id == "tavern_shot":
+            await use_tavern_shot(interaction)
+            return
+
+        if item.get("requires_target", True) is False:
+            await interaction.response.send_message(
+                "That consumable is not configured with a use action yet.",
                 ephemeral=True
             )
             return
