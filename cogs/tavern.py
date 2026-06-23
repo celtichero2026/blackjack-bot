@@ -1,5 +1,6 @@
 import discord
 import random
+import asyncio
 import os
 import time
 from discord.ext import commands
@@ -46,6 +47,9 @@ from database import (
     set_tavern_setting,
     get_title_changed_at,
     set_title_changed_at,
+    record_math_drill_result,
+    get_math_stats,
+    get_last_daily_math_challenge,
     add_player_effect,
     get_player_effect_quantity,
     consume_player_effect,
@@ -106,6 +110,43 @@ TITLE_ITEMS = {
 
 TITLE_SWAP_COOLDOWN_SECONDS = 24 * 60 * 60
 
+MATH_DRILL_TOTAL_QUESTIONS = 5
+MATH_QUICK_ANSWER_MS = 3000
+MATH_ACTIVE_CHANNELS = {}
+MATH_ACTIVE_USERS = set()
+MATH_CHANNEL_LOCKS = {}
+
+MATH_DRILL_DIFFICULTIES = {
+    "easy": {
+        "name": "Easy",
+        "emoji": "🟢",
+        "time_limit": 20,
+        "xp_per_correct": 5,
+        "perfect_gold": 5,
+        "operators": ["+", "-"],
+        "description": "Addition and subtraction. 20 seconds per question.",
+    },
+    "medium": {
+        "name": "Medium",
+        "emoji": "🟡",
+        "time_limit": 15,
+        "xp_per_correct": 8,
+        "perfect_gold": 10,
+        "operators": ["+", "-", "×"],
+        "description": "Addition, subtraction, and multiplication. 15 seconds per question.",
+    },
+    "hard": {
+        "name": "Hard",
+        "emoji": "🔴",
+        "time_limit": 10,
+        "xp_per_correct": 12,
+        "perfect_gold": 15,
+        "operators": ["×", "÷"],
+        "description": "Multiplication and clean division. 10 seconds per question.",
+    },
+}
+
+DAILY_MATH_CHALLENGE_GOLD = 100
 
 
 CONFETTI_DUD_GIF = os.getenv("CONFETTI_DUD_GIF", "").strip()
@@ -821,6 +862,199 @@ def mark_title_changed(user_id):
     )
 
 
+def math_drill_active_player(channel_id):
+    active = MATH_ACTIVE_CHANNELS.get(channel_id)
+
+    if not active:
+        return None
+
+    return active.get("player_id")
+
+
+def is_math_drill_active(channel_id):
+    return channel_id in MATH_ACTIVE_CHANNELS
+
+
+def math_focus_block_text(channel_id):
+    player_id = math_drill_active_player(channel_id)
+
+    if not player_id:
+        return "🧠 A Math Drill is active in this channel. Please wait for it to finish."
+
+    return f"🧠 <@{player_id}> is in a Math Drill right now. Please wait for the drill to finish."
+
+
+def can_start_math_drill(interaction):
+    if is_math_drill_active(interaction.channel_id):
+        return False, math_focus_block_text(interaction.channel_id)
+
+    if interaction.user.id in MATH_ACTIVE_USERS:
+        return False, "🧠 You already have an active Math Drill. Finish that one first."
+
+    return True, ""
+
+
+def generate_math_question(difficulty_id):
+    config = MATH_DRILL_DIFFICULTIES[difficulty_id]
+    operator = random.choice(config["operators"])
+
+    if difficulty_id == "easy":
+        a = random.randint(1, 20)
+        b = random.randint(1, 20)
+
+        if operator == "+":
+            answer = a + b
+            question = f"{a} + {b}"
+        else:
+            high = max(a, b)
+            low = min(a, b)
+            answer = high - low
+            question = f"{high} - {low}"
+
+    elif difficulty_id == "medium":
+        if operator == "×":
+            a = random.randint(2, 12)
+            b = random.randint(2, 12)
+            answer = a * b
+            question = f"{a} × {b}"
+        else:
+            a = random.randint(10, 50)
+            b = random.randint(5, 50)
+
+            if operator == "+":
+                answer = a + b
+                question = f"{a} + {b}"
+            else:
+                high = max(a, b)
+                low = min(a, b)
+                answer = high - low
+                question = f"{high} - {low}"
+
+    else:
+        if operator == "÷":
+            answer = random.randint(2, 20)
+            divisor = random.randint(2, 12)
+            dividend = answer * divisor
+            question = f"{dividend} ÷ {divisor}"
+        else:
+            a = random.randint(6, 20)
+            b = random.randint(6, 20)
+            answer = a * b
+            question = f"{a} × {b}"
+
+    return question, answer
+
+
+def generate_math_choices(answer):
+    choices = {answer}
+    spread = max(4, abs(answer) // 4)
+
+    while len(choices) < 4:
+        offset = random.randint(-spread, spread)
+
+        if offset == 0:
+            continue
+
+        candidate = answer + offset
+
+        if candidate < 0:
+            continue
+
+        choices.add(candidate)
+
+    choice_list = list(choices)
+    random.shuffle(choice_list)
+    return choice_list
+
+
+async def start_math_channel_focus(interaction, player_id):
+    channel = interaction.channel
+    guild = interaction.guild
+
+    if not guild or not channel:
+        return "⚠️ Math Focus could not lock the channel here, but the drill is still playable."
+
+    bot_member = guild.me
+
+    if not bot_member or not channel.permissions_for(bot_member).manage_channels:
+        return "⚠️ Math Focus needs **Manage Channels** to pause chat during drills. The drill is still playable."
+
+    default_role = guild.default_role
+    player_member = guild.get_member(player_id)
+
+    if not player_member:
+        return "⚠️ Math Focus could not find the player member, but the drill is still playable."
+
+    original_default = channel.overwrites_for(default_role)
+    original_player = channel.overwrites_for(player_member)
+    original_bot = channel.overwrites_for(bot_member)
+
+    MATH_CHANNEL_LOCKS[channel.id] = {
+        "channel": channel,
+        "default_role": default_role,
+        "player_member": player_member,
+        "bot_member": bot_member,
+        "original_default": original_default,
+        "original_player": original_player,
+        "original_bot": original_bot,
+    }
+
+    try:
+        default_overwrite = channel.overwrites_for(default_role)
+        default_overwrite.send_messages = False
+
+        player_overwrite = channel.overwrites_for(player_member)
+        player_overwrite.send_messages = True
+
+        bot_overwrite = channel.overwrites_for(bot_member)
+        bot_overwrite.send_messages = True
+
+        await channel.set_permissions(
+            default_role,
+            overwrite=default_overwrite,
+            reason="Tavern Math Drill focus mode"
+        )
+        await channel.set_permissions(
+            player_member,
+            overwrite=player_overwrite,
+            reason="Tavern Math Drill focus mode"
+        )
+        await channel.set_permissions(
+            bot_member,
+            overwrite=bot_overwrite,
+            reason="Tavern Math Drill focus mode"
+        )
+
+        return "🔒 Math Focus is active. Chat is paused until the drill ends."
+
+    except Exception:
+        await release_math_channel_focus(channel.id)
+        return "⚠️ Math Focus could not change channel permissions, but the drill is still playable."
+
+
+async def restore_permission_overwrite(channel, target, overwrite):
+    if overwrite.is_empty():
+        await channel.set_permissions(target, overwrite=None, reason="Tavern Math Drill ended")
+    else:
+        await channel.set_permissions(target, overwrite=overwrite, reason="Tavern Math Drill ended")
+
+
+async def release_math_channel_focus(channel_id):
+    lock = MATH_CHANNEL_LOCKS.pop(channel_id, None)
+
+    if not lock:
+        return
+
+    channel = lock["channel"]
+
+    try:
+        await restore_permission_overwrite(channel, lock["default_role"], lock["original_default"])
+        await restore_permission_overwrite(channel, lock["player_member"], lock["original_player"])
+        await restore_permission_overwrite(channel, lock["bot_member"], lock["original_bot"])
+    except Exception:
+        pass
+
+
 
 
 def get_sticker_quantity_map(user_id):
@@ -1462,6 +1696,13 @@ def build_sound_play_embed(user, sound_id, target=None, file_ready=True):
 
 
 async def play_soundboard_sound(interaction, sound_id, target_user=None):
+    if is_math_drill_active(interaction.channel_id):
+        await interaction.response.send_message(
+            math_focus_block_text(interaction.channel_id),
+            ephemeral=True
+        )
+        return
+
     sound = SOUND_ITEMS.get(sound_id)
 
     if not sound:
@@ -2501,6 +2742,444 @@ class DiceGameView(discord.ui.View):
             )
 
 
+
+class MathAnswerButton(discord.ui.Button):
+    def __init__(self, value):
+        super().__init__(
+            label=str(value),
+            style=discord.ButtonStyle.blurple,
+            row=0
+        )
+        self.value = value
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+
+        if not isinstance(view, MathDrillGameView):
+            await interaction.response.send_message(
+                "This math button is no longer active.",
+                ephemeral=True
+            )
+            return
+
+        await view.handle_answer(interaction, self.value)
+
+
+class MathDrillGameView(discord.ui.View):
+    def __init__(self, player, difficulty_id, is_daily=False, challenge_date=""):
+        super().__init__(timeout=300)
+        self.player = player
+        self.player_id = player.id
+        self.difficulty_id = difficulty_id
+        self.config = MATH_DRILL_DIFFICULTIES[difficulty_id]
+        self.is_daily = is_daily
+        self.challenge_date = challenge_date
+        self.current_index = 0
+        self.correct_count = 0
+        self.wrong_count = 0
+        self.current_streak = 0
+        self.best_streak = 0
+        self.fastest_answer_ms = 0
+        self.question = ""
+        self.answer = 0
+        self.choices = []
+        self.question_started_at = 0
+        self.message = None
+        self.timer_task = None
+        self.finished = False
+        self.lock_note = ""
+        self.level_ups = []
+        self.next_question()
+
+    def next_question(self):
+        self.question, self.answer = generate_math_question(self.difficulty_id)
+        self.choices = generate_math_choices(self.answer)
+        self.question_started_at = time.monotonic()
+        self.refresh_buttons()
+
+    def refresh_buttons(self):
+        self.clear_items()
+
+        for choice in self.choices:
+            self.add_item(MathAnswerButton(choice))
+
+    def build_embed(self, timed_out=False, previous_answer=None):
+        difficulty_name = f"{self.config['emoji']} {self.config['name']}"
+        title = "🧠 Daily Math Challenge" if self.is_daily else "🧠 Math Drill"
+        time_limit = self.config["time_limit"]
+
+        status_lines = [
+            f"Player: {self.player.mention}",
+            f"Difficulty: **{difficulty_name}**",
+            f"Question: **{self.current_index + 1}/{MATH_DRILL_TOTAL_QUESTIONS}**",
+            f"Score: **{self.correct_count}/{self.current_index}** answered correctly so far",
+            f"Time: **{time_limit}s** per question",
+        ]
+
+        if self.is_daily:
+            status_lines.append(f"Daily perfect reward: **{DAILY_MATH_CHALLENGE_GOLD:,} gold**")
+        else:
+            status_lines.append(f"Perfect reward: **{self.config['perfect_gold']:,} gold**")
+
+        if timed_out:
+            status_lines.append(f"⏰ Previous question timed out. Correct answer was **{previous_answer}**.")
+
+        if self.lock_note:
+            status_lines.append(self.lock_note)
+
+        embed = discord.Embed(
+            title=title,
+            description=(
+                "\n".join(status_lines)
+                + "\n\n"
+                + f"### What is **{self.question}**?"
+            ),
+            color=discord.Color.gold()
+        )
+
+        embed.set_footer(text="Only the active player can answer. Pick one button.")
+        return embed
+
+    def build_result_embed(self, xp_info, gold_reward, new_achievements):
+        difficulty_name = f"{self.config['emoji']} {self.config['name']}"
+        perfect = self.correct_count == MATH_DRILL_TOTAL_QUESTIONS
+        title = "🧠 Daily Math Challenge Complete" if self.is_daily else "🧠 Math Drill Complete"
+
+        if perfect:
+            outcome = "Perfect game! The Tavern braincell has been located."
+        elif self.correct_count >= 3:
+            outcome = "Solid run. The Tavern accepts this answer sheet."
+        else:
+            outcome = "Math happened. We are all trying our best."
+
+        xp_text = xp_result_text(xp_info) if xp_info else ""
+        gold_text = ""
+
+        if gold_reward > 0:
+            balance = get_balance(self.player_id)
+            gold_text = f"\n💰 Perfect reward: **+{gold_reward:,} gold**\nNew balance: **{balance:,} gold**"
+        elif self.is_daily:
+            gold_text = f"\n💰 Daily challenge reward requires a perfect **5/5**."
+
+        achievement_text = ""
+        if new_achievements:
+            achievement_text = (
+                "\n🏆 Achievement Unlocked:\n"
+                + "\n".join(new_achievements)
+            )
+
+        fastest_text = "No correct answers yet."
+        if self.fastest_answer_ms > 0:
+            fastest_text = f"{self.fastest_answer_ms / 1000:.2f}s"
+
+        embed = discord.Embed(
+            title=title,
+            description=(
+                f"{self.player.mention}\n"
+                f"{outcome}\n\n"
+                f"Difficulty: **{difficulty_name}**\n"
+                f"Score: **{self.correct_count}/{MATH_DRILL_TOTAL_QUESTIONS}**\n"
+                f"Best Streak: **{self.best_streak}**\n"
+                f"Fastest Correct Answer: **{fastest_text}**"
+                f"{xp_text}"
+                f"{gold_text}"
+                f"{achievement_text}"
+            ),
+            color=discord.Color.gold() if perfect else discord.Color.blurple()
+        )
+
+        embed.set_footer(text="Math Focus released. Tavern chaos may resume.")
+        return embed
+
+    async def start_timer(self):
+        if self.timer_task and not self.timer_task.done():
+            self.timer_task.cancel()
+
+        question_index = self.current_index
+        self.timer_task = asyncio.create_task(self.question_timer(question_index))
+
+    async def question_timer(self, question_index):
+        try:
+            await asyncio.sleep(self.config["time_limit"])
+        except asyncio.CancelledError:
+            return
+
+        if self.finished or self.current_index != question_index:
+            return
+
+        previous_answer = self.answer
+        self.wrong_count += 1
+        self.current_streak = 0
+        self.current_index += 1
+
+        if self.current_index >= MATH_DRILL_TOTAL_QUESTIONS:
+            await self.finish_from_timer()
+            return
+
+        self.next_question()
+
+        if self.message:
+            await self.message.edit(
+                embed=self.build_embed(timed_out=True, previous_answer=previous_answer),
+                view=self
+            )
+
+        await self.start_timer()
+
+    async def handle_answer(self, interaction, selected_value):
+        if interaction.user.id != self.player_id:
+            await interaction.response.send_message(
+                f"🧠 This is {self.player.mention}'s Math Drill. Let them cook.",
+                ephemeral=True
+            )
+            return
+
+        if self.finished:
+            await interaction.response.send_message(
+                "This Math Drill is already finished.",
+                ephemeral=True
+            )
+            return
+
+        if self.timer_task and not self.timer_task.done():
+            self.timer_task.cancel()
+
+        elapsed_ms = int((time.monotonic() - self.question_started_at) * 1000)
+        was_correct = selected_value == self.answer
+
+        if was_correct:
+            self.correct_count += 1
+            self.current_streak += 1
+            self.best_streak = max(self.best_streak, self.current_streak)
+
+            if self.fastest_answer_ms == 0 or elapsed_ms < self.fastest_answer_ms:
+                self.fastest_answer_ms = elapsed_ms
+        else:
+            self.wrong_count += 1
+            self.current_streak = 0
+
+        self.current_index += 1
+
+        if self.current_index >= MATH_DRILL_TOTAL_QUESTIONS:
+            await self.finish(interaction)
+            return
+
+        self.next_question()
+        await interaction.response.edit_message(
+            embed=self.build_embed(),
+            view=self
+        )
+        await self.start_timer()
+
+    async def finish_from_timer(self):
+        if self.finished:
+            return
+
+        self.finished = True
+        self.clear_items()
+        xp_info, gold_reward, new_achievements = self.apply_rewards()
+
+        if self.message:
+            await self.message.edit(
+                embed=self.build_result_embed(xp_info, gold_reward, new_achievements),
+                view=self
+            )
+
+        await self.cleanup()
+
+    async def finish(self, interaction):
+        if self.finished:
+            return
+
+        self.finished = True
+        self.clear_items()
+        xp_info, gold_reward, new_achievements = self.apply_rewards()
+
+        await interaction.response.edit_message(
+            embed=self.build_result_embed(xp_info, gold_reward, new_achievements),
+            view=self
+        )
+
+        await self.cleanup()
+        await send_level_up_messages(interaction, self.level_ups)
+
+    def apply_rewards(self):
+        perfect = self.correct_count == MATH_DRILL_TOTAL_QUESTIONS
+        base_xp = self.correct_count * self.config["xp_per_correct"]
+        xp_info = None
+        gold_reward = 0
+
+        if base_xp > 0:
+            xp_info = award_tavern_xp(self.player_id, base_xp, "math")
+
+            if xp_info and xp_info.get("level_up"):
+                self.level_ups.append((self.player_id, xp_info))
+
+        if perfect:
+            gold_reward = DAILY_MATH_CHALLENGE_GOLD if self.is_daily else self.config["perfect_gold"]
+            adjust_gold(self.player_id, gold_reward)
+
+        record_math_drill_result(
+            self.player_id,
+            self.difficulty_id,
+            self.correct_count,
+            self.wrong_count,
+            perfect,
+            self.best_streak,
+            self.fastest_answer_ms,
+            self.is_daily,
+            self.challenge_date,
+        )
+
+        new_achievements = check_achievements(self.player_id)
+        return xp_info, gold_reward, new_achievements
+
+    async def cleanup(self):
+        if self.timer_task and not self.timer_task.done():
+            self.timer_task.cancel()
+
+        MATH_ACTIVE_CHANNELS.pop(self.message.channel.id if self.message else 0, None)
+        MATH_ACTIVE_USERS.discard(self.player_id)
+
+        if self.message:
+            await release_math_channel_focus(self.message.channel.id)
+
+    async def on_timeout(self):
+        if self.finished:
+            return
+
+        self.finished = True
+        self.clear_items()
+
+        if self.message:
+            embed = discord.Embed(
+                title="🧠 Math Drill Timed Out",
+                description=f"{self.player.mention}'s Math Drill was abandoned. Math Focus released.",
+                color=discord.Color.light_grey()
+            )
+            await self.message.edit(embed=embed, view=self)
+            await release_math_channel_focus(self.message.channel.id)
+            MATH_ACTIVE_CHANNELS.pop(self.message.channel.id, None)
+
+        MATH_ACTIVE_USERS.discard(self.player_id)
+
+
+class MathDrillStartView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This Math Drill menu belongs to someone else. Use The Tavern menu to start your own.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    async def begin_drill(self, interaction, difficulty_id, is_daily=False):
+        can_start, message = can_start_math_drill(interaction)
+
+        if not can_start:
+            await interaction.response.send_message(message, ephemeral=True)
+            return
+
+        challenge_date = ""
+
+        if is_daily:
+            challenge_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            if get_last_daily_math_challenge(interaction.user.id) == challenge_date:
+                await interaction.response.send_message(
+                    "🧠 You already attempted today's Daily Math Challenge. Try again tomorrow.",
+                    ephemeral=True
+                )
+                return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        view = MathDrillGameView(
+            interaction.user,
+            difficulty_id,
+            is_daily=is_daily,
+            challenge_date=challenge_date
+        )
+
+        MATH_ACTIVE_CHANNELS[interaction.channel_id] = {
+            "player_id": interaction.user.id,
+            "started_at": time.time(),
+        }
+        MATH_ACTIVE_USERS.add(interaction.user.id)
+
+        view.lock_note = await start_math_channel_focus(interaction, interaction.user.id)
+
+        try:
+            message = await interaction.channel.send(
+                embed=view.build_embed(),
+                view=view
+            )
+        except Exception as error:
+            MATH_ACTIVE_CHANNELS.pop(interaction.channel_id, None)
+            MATH_ACTIVE_USERS.discard(interaction.user.id)
+            await release_math_channel_focus(interaction.channel_id)
+            await interaction.followup.send(
+                f"🧠 I could not start the Math Drill: `{error}`",
+                ephemeral=True
+            )
+            return
+
+        view.message = message
+        await view.start_timer()
+
+        await interaction.followup.send(
+            f"🧠 Math Drill started: {message.jump_url}",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Easy", emoji="🟢", style=discord.ButtonStyle.green)
+    async def easy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.begin_drill(interaction, "easy")
+
+    @discord.ui.button(label="Medium", emoji="🟡", style=discord.ButtonStyle.blurple)
+    async def medium_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.begin_drill(interaction, "medium")
+
+    @discord.ui.button(label="Hard", emoji="🔴", style=discord.ButtonStyle.red)
+    async def hard_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.begin_drill(interaction, "hard")
+
+    @discord.ui.button(label="Daily Challenge", emoji="🏆", style=discord.ButtonStyle.gray)
+    async def daily_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.begin_drill(interaction, "hard", is_daily=True)
+
+
+def build_math_drill_start_embed(user_id):
+    daily_status = "Available now"
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if get_last_daily_math_challenge(user_id) == today:
+        daily_status = "Already attempted today"
+
+    embed = discord.Embed(
+        title="🧠 Math Drills",
+        description=(
+            "Answer **5 timed multiple-choice questions**.\n"
+            "Only one player can drill in the channel at a time.\n\n"
+            "**Easy** — +5 XP per correct answer, +5 gold for perfect\n"
+            "**Medium** — +8 XP per correct answer, +10 gold for perfect\n"
+            "**Hard** — +12 XP per correct answer, +15 gold for perfect\n\n"
+            f"🏆 **Daily Hard Challenge:** {daily_status}\n"
+            f"Perfect daily challenge reward: **{DAILY_MATH_CHALLENGE_GOLD:,} gold**"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Math Focus pauses chat when the bot has Manage Channels.")
+    return embed
+
+
 class PlayAgainView(discord.ui.View):
     def __init__(self, game_type):
         super().__init__(timeout=180)
@@ -2542,6 +3221,13 @@ class BetModal(discord.ui.Modal):
         if get_balance(interaction.user.id) < bet:
             await interaction.response.send_message(
                 f"You need at least **{bet:,} gold** to create this table.",
+                ephemeral=True
+            )
+            return
+
+        if is_math_drill_active(interaction.channel_id):
+            await interaction.response.send_message(
+                math_focus_block_text(interaction.channel_id),
                 ephemeral=True
             )
             return
@@ -2631,14 +3317,43 @@ class TavernView(discord.ui.View):
 
     @discord.ui.button(label="Use Item", emoji="🎒", style=discord.ButtonStyle.secondary)
     async def use_item_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_math_drill_active(interaction.channel_id):
+            await interaction.response.send_message(
+                math_focus_block_text(interaction.channel_id),
+                ephemeral=True
+            )
+            return
+
         await send_usable_inventory_menu(interaction)
+
+    @discord.ui.button(label="Math Drills", emoji="🧠", style=discord.ButtonStyle.blurple)
+    async def math_drill_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=build_math_drill_start_embed(interaction.user.id),
+            view=MathDrillStartView(interaction.user.id),
+            ephemeral=True
+        )
 
     @discord.ui.button(label="Blackjack", emoji="🃏", style=discord.ButtonStyle.red)
     async def blackjack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_math_drill_active(interaction.channel_id):
+            await interaction.response.send_message(
+                math_focus_block_text(interaction.channel_id),
+                ephemeral=True
+            )
+            return
+
         await interaction.response.send_modal(BetModal("Blackjack"))
 
     @discord.ui.button(label="Dice", emoji="🎲", style=discord.ButtonStyle.green)
     async def dice_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_math_drill_active(interaction.channel_id):
+            await interaction.response.send_message(
+                math_focus_block_text(interaction.channel_id),
+                ephemeral=True
+            )
+            return
+
         await interaction.response.send_modal(BetModal("Dice"))
 
     @discord.ui.button(label="Leaderboard", emoji="🏆", style=discord.ButtonStyle.gray)
@@ -2716,6 +3431,24 @@ def build_profile_embed(target_user):
         achievement_text = "No achievements yet. Go make questionable choices."
 
     tomatoes_thrown, tomatoes_taken, pies_thrown, pies_taken = get_mischief_stats(target_user.id)
+    math_stats = get_math_stats(target_user.id)
+
+    (
+        math_games_played,
+        math_daily_games_played,
+        math_correct_answers,
+        math_wrong_answers,
+        math_perfect_rounds,
+        math_medium_perfect_rounds,
+        math_hard_perfect_rounds,
+        math_best_streak,
+        math_fastest_answer_ms,
+        math_last_daily_challenge,
+    ) = math_stats
+
+    fastest_math = "None yet"
+    if math_fastest_answer_ms > 0:
+        fastest_math = f"{math_fastest_answer_ms / 1000:.2f}s"
 
     embed = discord.Embed(
         title=f"👤 {target_user.display_name}'s Tavern Profile",
@@ -3282,6 +4015,18 @@ def build_detailed_stats_embed(target_user):
             f"Total XP: **{xp:,}**"
         ),
         inline=True
+    )
+
+    embed.add_field(
+        name="🧠 Math Drills",
+        value=(
+            f"Rounds Played: **{math_games_played:,}**\n"
+            f"Correct Answers: **{math_correct_answers:,}**\n"
+            f"Perfect Rounds: **{math_perfect_rounds:,}**\n"
+            f"Best Streak: **{math_best_streak:,}**\n"
+            f"Fastest Answer: **{fastest_math}**"
+        ),
+        inline=False
     )
 
     embed.add_field(
@@ -4721,6 +5466,13 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
             if interaction.user.id != self.owner_id:
                 await interaction.response.send_message(
                     "This target menu belongs to someone else.",
+                    ephemeral=True
+                )
+                return
+
+            if is_math_drill_active(interaction.channel_id):
+                await interaction.response.send_message(
+                    math_focus_block_text(interaction.channel_id),
                     ephemeral=True
                 )
                 return
