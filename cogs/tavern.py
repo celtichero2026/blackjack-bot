@@ -965,11 +965,19 @@ def lucky_shield_short_text(user_id):
 
 
 def get_mischief_bonus_line(item_id):
-    if random.random() > 0.05:
+    # 60% chance to add an extra line
+    if random.random() > 0.60:
         return ""
 
     if item_id == "rotten_tomato":
-        return "\n\n💦 Oof, that one was extra juicy."
+        return random.choice([
+            "\n\n💦 Oof, that one was extra juicy.",
+            "\n\n🍅 Direct hit. Produce-based violence has occurred.",
+            "\n\n😬 That tomato had emotional baggage.",
+            "\n\n🧼 Someone get a mop. And maybe a therapist.",
+            "\n\n🎯 The Tavern judges this throw as deeply unnecessary, but accurate.",
+            "\n\n🤢 That tomato was absolutely past its expiration date.",
+        ])
 
     if item_id == "cream_pie":
         return random.choice([
@@ -978,10 +986,12 @@ def get_mischief_bonus_line(item_id):
             "\n\n🥴 Someone get a towel. Actually... get two.",
             "\n\n😏 That was a very questionable use of dairy.",
             "\n\n🍰 The pie was consensual. The cleanup was not.",
+            "\n\n🧁 Dessert has been weaponized.",
+            "\n\n🙃 That pie had malicious intent.",
+            "\n\n🧽 Cleanup crew has officially resigned.",
         ])
 
     return ""
-
 
 def build_mischief_result_embed(attacker, target, item_id):
     if item_id == "rotten_tomato":
