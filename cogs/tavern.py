@@ -42,6 +42,9 @@ from database import (
     get_featured_sticker,
     get_sticker_pack_setting,
     set_sticker_pack_setting,
+    add_player_effect,
+    get_player_effect_quantity,
+    consume_player_effect,
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
@@ -96,6 +99,17 @@ MISCHIEF_ITEMS = {
         "price": 1000,
     },
 }
+
+GAMEPLAY_ITEMS = {
+    "lucky_shield": {
+        "name": "🍀 Lucky Shield",
+        "price": 1500,
+        "description": "Activate before playing. Your next gold loss has a 75% chance to be blocked.",
+    },
+}
+
+LUCKY_SHIELD_EFFECT_ID = "lucky_shield_active"
+LUCKY_SHIELD_PROTECT_CHANCE = 0.75
 
 SOUND_ITEMS = {
     "cat_girl": {
@@ -790,6 +804,65 @@ def get_owned_sound_items(user_id):
     return owned
 
 
+def get_owned_gameplay_items(user_id):
+    rows = get_inventory_by_type(user_id, "gameplay")
+
+    owned = []
+
+    for item_id, quantity in rows:
+        if item_id in GAMEPLAY_ITEMS and quantity > 0:
+            owned.append((item_id, quantity))
+
+    return owned
+
+
+def get_active_lucky_shields(user_id):
+    return get_player_effect_quantity(user_id, LUCKY_SHIELD_EFFECT_ID)
+
+
+def activate_lucky_shield(user_id):
+    removed = consume_inventory_item(user_id, "lucky_shield", 1)
+
+    if not removed:
+        return False
+
+    add_player_effect(
+        user_id,
+        LUCKY_SHIELD_EFFECT_ID,
+        1,
+        datetime.now(timezone.utc).isoformat()
+    )
+
+    return True
+
+
+def try_lucky_shield_protection(user_id):
+    active_count = get_active_lucky_shields(user_id)
+
+    if active_count <= 0:
+        return False, False
+
+    consumed = consume_player_effect(user_id, LUCKY_SHIELD_EFFECT_ID, 1)
+
+    if not consumed:
+        return False, False
+
+    protected = random.random() < LUCKY_SHIELD_PROTECT_CHANCE
+    return True, protected
+
+
+def lucky_shield_attempt_text(attempted, protected, loss_amount):
+    if not attempted:
+        return ""
+
+    if protected:
+        return (
+            f"\n🍀 **Lucky Shield activated!** The loss was blocked and "
+            f"**{loss_amount:,} gold** was saved."
+        )
+
+    return "\n🍀 **Lucky Shield shattered!** It failed to block the loss."
+
 def get_sound_file_path(sound_id):
     sound = SOUND_ITEMS.get(sound_id)
 
@@ -956,11 +1029,12 @@ async def play_soundboard_sound(interaction, sound_id, target_user=None):
 
 async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
     owned_mischief = get_owned_mischief_items(interaction.user.id)
+    owned_gameplay = get_owned_gameplay_items(interaction.user.id)
     owned_sounds = get_owned_sound_items(interaction.user.id)
 
-    if not owned_mischief and not owned_sounds:
+    if not owned_mischief and not owned_gameplay and not owned_sounds:
         await interaction.response.send_message(
-            "🎭 You do not have any usable consumables or sounds yet.\n\n"
+            "🎭 You do not have any usable items or sounds yet.\n\n"
             "Buy some from the **Mischief Market** or **Sound Shop** first.",
             ephemeral=True
         )
@@ -969,23 +1043,38 @@ async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
     lines = []
 
     if owned_mischief:
-        lines.append("**🎭 Consumables**")
+        lines.append("**🎭 Mischief**")
         for item_id, quantity in owned_mischief:
             item = MISCHIEF_ITEMS.get(item_id)
             if item:
                 lines.append(f"{item['name']} x{quantity}")
 
+    if owned_gameplay:
+        if lines:
+            lines.append("")
+        lines.append("**🍀 Gameplay Items**")
+        for item_id, quantity in owned_gameplay:
+            item = GAMEPLAY_ITEMS.get(item_id)
+            if item:
+                lines.append(f"{item['name']} x{quantity}")
+
+    active_shields = get_active_lucky_shields(interaction.user.id)
+    if active_shields > 0:
+        if lines:
+            lines.append("")
+        lines.append(f"**Active:** 🍀 Lucky Shield x{active_shields}")
+
     if owned_sounds:
         if lines:
             lines.append("")
-        lines.append("**🔊 Sounds**")
+        lines.append("**🔊 Sound Attacks**")
         for sound_id, quantity in owned_sounds:
             sound = SOUND_ITEMS.get(sound_id)
             if sound:
                 lines.append(sound["name"])
 
     embed = discord.Embed(
-        title="🎭 Use Item / Sound",
+        title="🎒 Use Tavern Item",
         description=(
             "Choose something from your Tavern inventory.\n\n"
             f"{chr(10).join(lines)}"
@@ -993,12 +1082,15 @@ async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
         color=discord.Color.gold()
     )
 
+    embed.set_footer(text="Mischief and sounds are public. Lucky Shield arms your next possible loss.")
+
     await interaction.response.send_message(
         embed=embed,
         view=UseConsumableSelectView(
             owner_id=interaction.user.id,
             allowed_target_ids=allowed_target_ids,
-            include_sounds=True
+            include_sounds=True,
+            include_gameplay=True
         ),
         ephemeral=True
     )
@@ -1154,11 +1246,19 @@ class BlackjackGameView(discord.ui.View):
                     hand_label = f" Hand {hand_index + 1}"
 
                 if player_total > 21:
-                    result = f"{hand_label} bust — lost **{bet:,} gold**"
+                    shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
+
+                    if shield_protected:
+                        adjust_gold(player_id, bet)
+                        result = f"{hand_label} bust — lost **0 gold**"
+                    else:
+                        result = f"{hand_label} bust — lost **{bet:,} gold**"
+                        update_biggest_loss(player_id, bet)
+
+                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, bet)
                     record_game_stat(player_id, "loss")
                     xp_info = self.award_xp(player_id, 10)
                     result += xp_result_text(xp_info)
-                    update_biggest_loss(player_id, bet)
 
                 elif dealer_total > 21:
                     payout = bet * 2
@@ -1179,11 +1279,19 @@ class BlackjackGameView(discord.ui.View):
                     update_biggest_win(player_id, bet)
 
                 elif player_total < dealer_total:
-                    result = f"{hand_label} lost **{bet:,} gold**"
+                    shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
+
+                    if shield_protected:
+                        adjust_gold(player_id, bet)
+                        result = f"{hand_label} lost the hand — lost **0 gold**"
+                    else:
+                        result = f"{hand_label} lost **{bet:,} gold**"
+                        update_biggest_loss(player_id, bet)
+
+                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, bet)
                     record_game_stat(player_id, "loss")
                     xp_info = self.award_xp(player_id, 10)
                     result += xp_result_text(xp_info)
-                    update_biggest_loss(player_id, bet)
 
                 else:
                     adjust_gold(player_id, bet)
@@ -1511,7 +1619,7 @@ class DiceTableView(discord.ui.View):
             description=(
                 f"**Bet:** {self.bet:,} gold\n\n"
                 f"**Players:**\n{player_list}\n\n"
-                "Highest roll wins."
+                "Each player rolls **3 dice**. Highest total wins."
             ),
             color=discord.Color.dark_gold()
         )
@@ -1598,34 +1706,41 @@ class DiceTableView(discord.ui.View):
             record_wager(player_id, self.bet)
 
         rolls = {}
+        totals = {}
 
         for player_id in self.players:
-            rolls[player_id] = random.randint(1, 6)
+            player_rolls = [random.randint(1, 6) for _ in range(3)]
+            rolls[player_id] = player_rolls
+            totals[player_id] = sum(player_rolls)
 
-        bot_roll = None
+        bot_rolls = None
+        bot_total = None
         if self.bot_added:
-            bot_roll = random.randint(1, 6)
+            bot_rolls = [random.randint(1, 6) for _ in range(3)]
+            bot_total = sum(bot_rolls)
 
-        all_rolls = list(rolls.values())
-        if bot_roll is not None:
-            all_rolls.append(bot_roll)
+        all_totals = list(totals.values())
+        if bot_total is not None:
+            all_totals.append(bot_total)
 
-        highest = max(all_rolls)
+        highest = max(all_totals)
 
         human_winners = [
-            player_id for player_id, roll in rolls.items()
-            if roll == highest
+            player_id for player_id, total in totals.items()
+            if total == highest
         ]
 
-        bot_wins = self.bot_added and bot_roll == highest
+        bot_wins = self.bot_added and bot_total == highest
 
-        description = f"**Bet:** {self.bet:,} gold\n\n**Rolls:**\n"
+        description = f"**Bet:** {self.bet:,} gold\n\n**Best of 3 Rolls:**\n"
 
-        for player_id, roll in rolls.items():
-            description += f"<@{player_id}> rolled **{roll}**\n"
+        for player_id, player_rolls in rolls.items():
+            roll_text = " + ".join(str(roll) for roll in player_rolls)
+            description += f"<@{player_id}> rolled **{roll_text} = {totals[player_id]}**\n"
 
         if self.bot_added:
-            description += f"🤖 Tavern Bot rolled **{bot_roll}**\n"
+            roll_text = " + ".join(str(roll) for roll in bot_rolls)
+            description += f"🤖 Tavern Bot rolled **{roll_text} = {bot_total}**\n"
 
         description += "\n**Results:**\n"
 
@@ -1638,11 +1753,20 @@ class DiceTableView(discord.ui.View):
 
         if bot_wins and not human_winners:
             for player_id in self.players:
-                record_game_result(player_id, "loss", -self.bet)
-                xp_info = self.award_xp(player_id, 10, level_ups)
-                update_biggest_loss(player_id, self.bet)
+                shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
 
-                result = f"Lost **{self.bet:,} gold**"
+                if shield_protected:
+                    record_game_stat(player_id, "loss")
+                    xp_info = self.award_xp(player_id, 10, level_ups)
+                    result = "Lost the round, but lost **0 gold**"
+                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
+                else:
+                    record_game_result(player_id, "loss", -self.bet)
+                    xp_info = self.award_xp(player_id, 10, level_ups)
+                    update_biggest_loss(player_id, self.bet)
+                    result = f"Lost **{self.bet:,} gold**"
+                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
+
                 result += xp_result_text(xp_info)
                 result = add_achievement_text(player_id, result)
 
@@ -1667,11 +1791,20 @@ class DiceTableView(discord.ui.View):
                     result += xp_result_text(xp_info)
 
                 else:
-                    record_game_result(player_id, "loss", -self.bet)
-                    xp_info = self.award_xp(player_id, 10, level_ups)
-                    update_biggest_loss(player_id, self.bet)
+                    shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
 
-                    result = f"Lost **{self.bet:,} gold**"
+                    if shield_protected:
+                        record_game_stat(player_id, "loss")
+                        xp_info = self.award_xp(player_id, 10, level_ups)
+                        result = "Lost the round, but lost **0 gold**"
+                        result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
+                    else:
+                        record_game_result(player_id, "loss", -self.bet)
+                        xp_info = self.award_xp(player_id, 10, level_ups)
+                        update_biggest_loss(player_id, self.bet)
+                        result = f"Lost **{self.bet:,} gold**"
+                        result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
+
                     result += xp_result_text(xp_info)
 
                 result = add_achievement_text(player_id, result)
@@ -1811,6 +1944,17 @@ class TavernView(discord.ui.View):
     @discord.ui.button(label="Profile", emoji="👤", style=discord.ButtonStyle.secondary)
     async def profile_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await send_profile(interaction, interaction.user)
+
+    @discord.ui.button(label="Sticker Book", emoji="📖", style=discord.ButtonStyle.blurple)
+    async def sticker_book_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=build_sticker_book_embed(interaction.user),
+            view=PublicStickerBookView(interaction.user)
+        )
+
+    @discord.ui.button(label="Use Item", emoji="🎒", style=discord.ButtonStyle.secondary)
+    async def use_item_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await send_usable_inventory_menu(interaction)
 
     @discord.ui.button(label="Blackjack", emoji="🃏", style=discord.ButtonStyle.red)
     async def blackjack_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1974,6 +2118,21 @@ def build_inventory_embed(target_user):
     else:
         mischief_text = "No mischief items owned."
 
+    gameplay_items = get_owned_gameplay_items(target_user.id)
+    active_shields = get_active_lucky_shields(target_user.id)
+
+    gameplay_lines = []
+
+    for item_id, quantity in gameplay_items:
+        item = GAMEPLAY_ITEMS.get(item_id)
+        if item:
+            gameplay_lines.append(f"{item['name']} x{quantity}")
+
+    if active_shields > 0:
+        gameplay_lines.append(f"🍀 Active Lucky Shield x{active_shields}")
+
+    gameplay_text = "\n".join(gameplay_lines) if gameplay_lines else "No gameplay consumables owned."
+
     embed = discord.Embed(
         title=f"🎒 {target_user.display_name}'s Inventory",
         description="Inventory is only visible on your own profile.",
@@ -1989,6 +2148,12 @@ def build_inventory_embed(target_user):
     embed.add_field(
         name="🎭 Consumables",
         value=mischief_text,
+        inline=False
+    )
+
+    embed.add_field(
+        name="🍀 Gameplay Items",
+        value=gameplay_text,
         inline=False
     )
 
@@ -2248,6 +2413,68 @@ class StickerCollectionView(discord.ui.View):
         await interaction.response.edit_message(
             embed=build_sticker_book_embed(self.target_user),
             view=StickerBookView(self.owner_id, self.target_user)
+        )
+
+
+class PublicStickerBookView(discord.ui.View):
+    def __init__(self, target_user):
+        super().__init__(timeout=180)
+        self.target_user = target_user
+
+    @discord.ui.button(label="Welcome", emoji="🍺", style=discord.ButtonStyle.green)
+    async def welcome_collection_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, "welcome", 0),
+            view=PublicStickerCollectionView(self.target_user, "welcome", 0)
+        )
+
+    @discord.ui.button(label="Mischief", emoji="🎭", style=discord.ButtonStyle.red)
+    async def mischief_collection_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, "mischief", 0),
+            view=PublicStickerCollectionView(self.target_user, "mischief", 0)
+        )
+
+    @discord.ui.button(label="Casino", emoji="🎲", style=discord.ButtonStyle.blurple)
+    async def casino_collection_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, "casino", 0),
+            view=PublicStickerCollectionView(self.target_user, "casino", 0)
+        )
+
+
+class PublicStickerCollectionView(discord.ui.View):
+    def __init__(self, target_user, collection_id, page_index):
+        super().__init__(timeout=180)
+        self.target_user = target_user
+        self.collection_id = collection_id
+        self.page_index = page_index
+
+    @discord.ui.button(label="Previous", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        collection = STICKER_COLLECTIONS[self.collection_id]
+        new_index = (self.page_index - 1) % len(collection["stickers"])
+
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, self.collection_id, new_index),
+            view=PublicStickerCollectionView(self.target_user, self.collection_id, new_index)
+        )
+
+    @discord.ui.button(label="Next", emoji="➡️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        collection = STICKER_COLLECTIONS[self.collection_id]
+        new_index = (self.page_index + 1) % len(collection["stickers"])
+
+        await interaction.response.edit_message(
+            embed=build_sticker_collection_embed(self.target_user, self.collection_id, new_index),
+            view=PublicStickerCollectionView(self.target_user, self.collection_id, new_index)
+        )
+
+    @discord.ui.button(label="Back to Book", emoji="📖", style=discord.ButtonStyle.blurple)
+    async def back_to_book_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_sticker_book_embed(self.target_user),
+            view=PublicStickerBookView(self.target_user)
         )
 
 
@@ -3258,6 +3485,8 @@ class StickerPackResultView(discord.ui.View):
 def build_mischief_market_embed(user_id):
     balance = get_balance(user_id)
     owned_items = get_owned_mischief_items(user_id)
+    owned_gameplay = get_owned_gameplay_items(user_id)
+    active_shields = get_active_lucky_shields(user_id)
 
     owned_lines = []
 
@@ -3266,26 +3495,37 @@ def build_mischief_market_embed(user_id):
         if item:
             owned_lines.append(f"{item['name']} x{quantity}")
 
-    owned_text = "\n".join(owned_lines) if owned_lines else "No mischief items owned yet."
+    for item_id, quantity in owned_gameplay:
+        item = GAMEPLAY_ITEMS.get(item_id)
+        if item:
+            owned_lines.append(f"{item['name']} x{quantity}")
+
+    if active_shields > 0:
+        owned_lines.append(f"🍀 Active Lucky Shield x{active_shields}")
+
+    owned_text = "\n".join(owned_lines) if owned_lines else "No consumables owned yet."
 
     shop_lines = []
 
     for item_id, item in MISCHIEF_ITEMS.items():
         shop_lines.append(f"{item['name']} — {item['price']:,} gold")
 
+    for item_id, item in GAMEPLAY_ITEMS.items():
+        shop_lines.append(f"{item['name']} — {item['price']:,} gold")
+
     embed = discord.Embed(
-        title="🎭 Mischief Market",
+        title="🎭 Consumables Market",
         description=(
             f"💰 Gold: **{balance:,}**\n\n"
             f"**For Sale:**\n"
             f"{chr(10).join(shop_lines)}\n\n"
-            f"**Your Mischief:**\n"
+            f"**Your Consumables:**\n"
             f"{owned_text}"
         ),
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="Buy mischief, then use it on someone.")
+    embed.set_footer(text="Mischief is for chaos. Lucky Shield protects your next possible gold loss.")
     return embed
 
 
@@ -3297,8 +3537,11 @@ def build_buy_mischief_embed(user_id):
     for item_id, item in MISCHIEF_ITEMS.items():
         lines.append(f"{item['name']} — {item['price']:,} gold")
 
+    for item_id, item in GAMEPLAY_ITEMS.items():
+        lines.append(f"{item['name']} — {item['price']:,} gold")
+
     embed = discord.Embed(
-        title="💰 Buy Mischief",
+        title="💰 Buy Consumables",
         description=(
             f"💰 Gold: **{balance:,}**\n\n"
             f"{chr(10).join(lines)}\n\n"
@@ -3312,6 +3555,7 @@ def build_buy_mischief_embed(user_id):
 
 def build_use_mischief_embed(user_id):
     owned_items = get_owned_mischief_items(user_id)
+    owned_gameplay = get_owned_gameplay_items(user_id)
 
     lines = []
 
@@ -3320,14 +3564,23 @@ def build_use_mischief_embed(user_id):
         if item:
             lines.append(f"{item['name']} x{quantity}")
 
-    owned_text = "\n".join(lines) if lines else "No usable mischief items owned."
+    for item_id, quantity in owned_gameplay:
+        item = GAMEPLAY_ITEMS.get(item_id)
+        if item:
+            lines.append(f"{item['name']} x{quantity}")
+
+    active_shields = get_active_lucky_shields(user_id)
+    if active_shields > 0:
+        lines.append(f"🍀 Active Lucky Shield x{active_shields}")
+
+    owned_text = "\n".join(lines) if lines else "No usable consumables owned."
 
     embed = discord.Embed(
-        title="🎭 Use Mischief",
+        title="🎒 Use Consumables",
         description=(
             f"**Your Consumables:**\n"
             f"{owned_text}\n\n"
-            "Choose an item, then pick a target."
+            "Choose an item. Mischief needs a target; Lucky Shield arms immediately."
         ),
         color=discord.Color.gold()
     )
@@ -3343,14 +3596,14 @@ class MischiefMarketView(discord.ui.View):
     async def interaction_check(self, interaction):
         if interaction.user.id != self.owner_id:
             await interaction.response.send_message(
-                "This Mischief Market belongs to someone else. Use `/shop` to open your own.",
+                "This Consumables Market belongs to someone else. Use `/shop` to open your own.",
                 ephemeral=True
             )
             return False
 
         return True
 
-    @discord.ui.button(label="Buy Mischief", emoji="💰", style=discord.ButtonStyle.green)
+    @discord.ui.button(label="Buy Consumable", emoji="💰", style=discord.ButtonStyle.green)
     async def buy_mischief_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             content=None,
@@ -3358,13 +3611,14 @@ class MischiefMarketView(discord.ui.View):
             view=BuyMischiefSelectView(self.owner_id)
         )
 
-    @discord.ui.button(label="Use Mischief", emoji="🎭", style=discord.ButtonStyle.blurple)
+    @discord.ui.button(label="Use Consumable", emoji="🎒", style=discord.ButtonStyle.blurple)
     async def use_mischief_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         owned_items = get_owned_mischief_items(self.owner_id)
+        owned_gameplay = get_owned_gameplay_items(self.owner_id)
 
-        if not owned_items:
+        if not owned_items and not owned_gameplay:
             embed = build_mischief_market_embed(self.owner_id)
-            embed.set_footer(text="You do not own any mischief items yet.")
+            embed.set_footer(text="You do not own any consumables yet.")
 
             await interaction.response.edit_message(
                 content=None,
@@ -3376,7 +3630,11 @@ class MischiefMarketView(discord.ui.View):
         await interaction.response.edit_message(
             content=None,
             embed=build_use_mischief_embed(self.owner_id),
-            view=UseConsumableSelectView(self.owner_id, include_sounds=False)
+            view=UseConsumableSelectView(
+                self.owner_id,
+                include_sounds=False,
+                include_gameplay=True
+            )
         )
 
     @discord.ui.button(label="Back to Shop", emoji="⬅️", style=discord.ButtonStyle.secondary)
@@ -3398,25 +3656,49 @@ class BuyMischiefSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=item["name"],
-                    description=f"{item['price']:,} gold",
-                    value=item_id
+                    description=f"Mischief • {item['price']:,} gold",
+                    value=f"mischief:{item_id}"
+                )
+            )
+
+        for item_id, item in GAMEPLAY_ITEMS.items():
+            options.append(
+                discord.SelectOption(
+                    label=item["name"],
+                    description=f"Gameplay • {item['price']:,} gold",
+                    value=f"gameplay:{item_id}"
                 )
             )
 
         super().__init__(
-            placeholder="Choose mischief to buy...",
+            placeholder="Choose consumable to buy...",
             min_values=1,
             max_values=1,
             options=options
         )
 
     async def callback(self, interaction: discord.Interaction):
-        item_id = self.values[0]
-        item = MISCHIEF_ITEMS.get(item_id)
+        selected = self.values[0]
+
+        if ":" not in selected:
+            await interaction.response.send_message(
+                "That consumable does not exist.",
+                ephemeral=True
+            )
+            return
+
+        item_type, item_id = selected.split(":", 1)
+
+        if item_type == "gameplay":
+            item = GAMEPLAY_ITEMS.get(item_id)
+            inventory_type = "gameplay"
+        else:
+            item = MISCHIEF_ITEMS.get(item_id)
+            inventory_type = "mischief"
 
         if not item:
             await interaction.response.send_message(
-                "That mischief item does not exist.",
+                "That consumable does not exist.",
                 ephemeral=True
             )
             return
@@ -3439,7 +3721,7 @@ class BuyMischiefSelect(discord.ui.Select):
         add_inventory_quantity(
             interaction.user.id,
             item_id,
-            "mischief",
+            inventory_type,
             1,
             date_acquired
         )
@@ -3481,12 +3763,14 @@ class BuyMischiefSelectView(discord.ui.View):
 
 
 class UseConsumableSelect(discord.ui.Select):
-    def __init__(self, owner_id, allowed_target_ids=None, include_sounds=True):
+    def __init__(self, owner_id, allowed_target_ids=None, include_sounds=True, include_gameplay=True):
         self.owner_id = owner_id
         self.allowed_target_ids = allowed_target_ids
         self.include_sounds = include_sounds
+        self.include_gameplay = include_gameplay
 
         owned_items = get_owned_mischief_items(owner_id)
+        owned_gameplay = get_owned_gameplay_items(owner_id) if include_gameplay else []
         owned_sounds = get_owned_sound_items(owner_id) if include_sounds else []
 
         options = []
@@ -3499,8 +3783,21 @@ class UseConsumableSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=item["name"],
-                    description=f"Consumable • Owned: {quantity}",
+                    description=f"Mischief • Owned: {quantity}",
                     value=f"mischief:{item_id}"
+                )
+            )
+
+        for item_id, quantity in owned_gameplay:
+            item = GAMEPLAY_ITEMS.get(item_id)
+            if not item:
+                continue
+
+            options.append(
+                discord.SelectOption(
+                    label=item["name"],
+                    description=f"Gameplay • Owned: {quantity}",
+                    value=f"gameplay:{item_id}"
                 )
             )
 
@@ -3512,7 +3809,7 @@ class UseConsumableSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=sound["name"],
-                    description="Sound Board • Permanent unlock",
+                    description="Sound Attack • Permanent unlock",
                     value=f"sound:{sound_id}"
                 )
             )
@@ -3549,6 +3846,51 @@ class UseConsumableSelect(discord.ui.Select):
             )
             return
 
+        if item_type == "gameplay":
+            item = GAMEPLAY_ITEMS.get(item_id)
+
+            if not item:
+                await interaction.response.send_message(
+                    "That gameplay item does not exist.",
+                    ephemeral=True
+                )
+                return
+
+            if item_id == "lucky_shield":
+                activated = activate_lucky_shield(interaction.user.id)
+
+                if not activated:
+                    await interaction.response.send_message(
+                        "You do not have a Lucky Shield to activate.",
+                        ephemeral=True
+                    )
+                    return
+
+                active_count = get_active_lucky_shields(interaction.user.id)
+
+                embed = discord.Embed(
+                    title="🍀 Lucky Shield Armed",
+                    description=(
+                        "Your next gold loss will trigger Lucky Shield.\n\n"
+                        "Chance to block the loss: **75%**\n"
+                        f"Active Lucky Shields: **{active_count}**"
+                    ),
+                    color=discord.Color.gold()
+                )
+                embed.set_footer(text="It is consumed when it attempts to protect you.")
+
+                await interaction.response.edit_message(
+                    content=None,
+                    embed=embed,
+                    view=UseConsumableSelectView(
+                        owner_id=interaction.user.id,
+                        allowed_target_ids=self.allowed_target_ids,
+                        include_sounds=self.include_sounds,
+                        include_gameplay=self.include_gameplay
+                    )
+                )
+                return
+
         item = MISCHIEF_ITEMS.get(item_id)
 
         if not item:
@@ -3577,13 +3919,14 @@ class UseConsumableSelect(discord.ui.Select):
 
 
 class UseConsumableSelectView(discord.ui.View):
-    def __init__(self, owner_id, allowed_target_ids=None, include_sounds=True):
+    def __init__(self, owner_id, allowed_target_ids=None, include_sounds=True, include_gameplay=True):
         super().__init__(timeout=180)
         self.owner_id = owner_id
         self.allowed_target_ids = allowed_target_ids
         self.include_sounds = include_sounds
+        self.include_gameplay = include_gameplay
 
-        self.add_item(UseConsumableSelect(owner_id, allowed_target_ids, include_sounds))
+        self.add_item(UseConsumableSelect(owner_id, allowed_target_ids, include_sounds, include_gameplay))
 
     async def interaction_check(self, interaction):
         if interaction.user.id != self.owner_id:
@@ -3607,14 +3950,15 @@ class UseConsumableSelectView(discord.ui.View):
             await interaction.response.edit_message(
                 content=None,
                 embed=discord.Embed(
-                    title="🎭 Use Item / Sound",
+                    title="🎒 Use Tavern Item",
                     description="Choose something from your Tavern inventory.",
                     color=discord.Color.gold()
                 ),
                 view=UseConsumableSelectView(
                     owner_id=self.owner_id,
                     allowed_target_ids=self.allowed_target_ids,
-                    include_sounds=self.include_sounds
+                    include_sounds=self.include_sounds,
+                    include_gameplay=self.include_gameplay
                 )
             )
 
