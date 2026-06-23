@@ -42,6 +42,8 @@ from database import (
     get_featured_sticker,
     get_sticker_pack_setting,
     set_sticker_pack_setting,
+    get_tavern_setting,
+    set_tavern_setting,
     add_player_effect,
     get_player_effect_quantity,
     consume_player_effect,
@@ -133,6 +135,8 @@ SOUND_ITEMS = {
 
 SOUND_ATTACK_COOLDOWN_SECONDS = 45
 SOUND_ATTACK_COOLDOWNS = {}
+
+ITEM_CONFIRMATIONS_SETTING_KEY = "item_confirmations_enabled"
 
 
 STICKER_RARITIES = {
@@ -705,6 +709,57 @@ def format_enabled_status(is_enabled):
     return "🚫 Disabled"
 
 
+def parse_setting_bool(value, default=True):
+    if value is None or value == "":
+        return default
+
+    normalized = str(value).strip().lower()
+
+    if normalized in ["1", "true", "yes", "on", "enabled"]:
+        return True
+
+    if normalized in ["0", "false", "no", "off", "disabled"]:
+        return False
+
+    return default
+
+
+def item_confirmations_enabled():
+    value = get_tavern_setting(
+        ITEM_CONFIRMATIONS_SETTING_KEY,
+        "1"
+    )
+
+    return parse_setting_bool(value, default=True)
+
+
+def set_item_confirmations_enabled(enabled):
+    set_tavern_setting(
+        ITEM_CONFIRMATIONS_SETTING_KEY,
+        "1" if enabled else "0",
+        datetime.now(timezone.utc).isoformat()
+    )
+
+
+def build_confirmation_control_embed():
+    enabled = item_confirmations_enabled()
+
+    embed = discord.Embed(
+        title="⚙️ Tavern Confirmation Messages",
+        description=(
+            f"Private success confirmations are currently: {format_enabled_status(enabled)}\n\n"
+            "This controls small success messages after public item actions, like:\n"
+            "• 🎭 Mischief deployed\n"
+            "• 🔊 Sound attack posted\n\n"
+            "Error, refund, cooldown, and permission messages will still show."
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Founder only.")
+    return embed
+
+
 def build_pack_control_embed():
     lines = []
     mix_collections = get_tavern_mix_enabled_collections()
@@ -1103,10 +1158,7 @@ async def play_soundboard_sound(interaction, sound_id, target_user=None):
 
     mark_sound_attack_used(interaction.user.id, sound_id)
 
-    await interaction.response.send_message(
-        "🔊 Sound attack posted.",
-        ephemeral=True
-    )
+    await interaction.response.defer(ephemeral=True)
 
     content = None
     if target_user:
@@ -1125,7 +1177,13 @@ async def play_soundboard_sound(interaction, sound_id, target_user=None):
     if file_exists:
         send_kwargs["file"] = discord.File(file_path, filename=file_name)
 
-    await interaction.channel.send(**send_kwargs)
+    public_message = await interaction.channel.send(**send_kwargs)
+
+    if item_confirmations_enabled():
+        await interaction.followup.send(
+            f"🔊 Sound attack posted: {public_message.jump_url}",
+            ephemeral=True
+        )
 
 
 async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
@@ -4314,10 +4372,11 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
             if mischief_stat_item_id:
                 record_mischief_hit(interaction.user.id, target.id, mischief_stat_item_id)
 
-            await interaction.followup.send(
-                f"🎭 Mischief deployed: {public_message.jump_url}",
-                ephemeral=True
-            )
+            if item_confirmations_enabled():
+                await interaction.followup.send(
+                    f"🎭 Mischief deployed: {public_message.jump_url}",
+                    ephemeral=True
+                )
 
         except Exception as error:
             import traceback
@@ -4847,6 +4906,21 @@ class Tavern(commands.Cog):
 
         await interaction.response.send_message(
             embed=build_pack_control_embed(),
+            ephemeral=True
+        )
+
+    @app_commands.command(name="confirmations", description="Founder only - toggle private item success confirmations")
+    @app_commands.describe(enabled="Show private success confirmations after public item actions?")
+    async def confirmations(self, interaction: discord.Interaction, enabled: Optional[bool] = None):
+        if interaction.user.id != FOUNDER_ID:
+            await interaction.response.send_message("🚫 Founder only.", ephemeral=True)
+            return
+
+        if enabled is not None:
+            set_item_confirmations_enabled(enabled)
+
+        await interaction.response.send_message(
+            embed=build_confirmation_control_embed(),
             ephemeral=True
         )
 
