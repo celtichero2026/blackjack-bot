@@ -159,6 +159,14 @@ def setup_database():
     """)
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS tavern_settings (
+            setting_key TEXT PRIMARY KEY,
+            setting_value TEXT,
+            updated_at TEXT
+        )
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS player_effects (
             user_id TEXT,
             effect_id TEXT,
@@ -1085,3 +1093,46 @@ def set_sticker_pack_setting(
     conn.commit()
     conn.close()
 
+
+
+def get_tavern_setting(setting_key: str, default_value: str = ""):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT setting_value
+        FROM tavern_settings
+        WHERE setting_key = ?
+        """,
+        (setting_key,)
+    )
+
+    row = cur.fetchone()
+
+    conn.close()
+
+    if not row:
+        return default_value
+
+    return row[0]
+
+
+def set_tavern_setting(setting_key: str, setting_value: str, updated_at: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO tavern_settings
+        (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        """,
+        (setting_key, setting_value, updated_at)
+    )
+
+    conn.commit()
+    conn.close()
