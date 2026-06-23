@@ -107,12 +107,46 @@ GAMEPLAY_ITEMS = {
     "lucky_shield": {
         "name": "🍀 Lucky Shield",
         "price": 1500,
-        "description": "Activate before playing. Your next gold loss has a 75% chance to be blocked.",
+        "description": "Activate before playing. Your next gold loss has a 25% chance to be blocked.",
+    },
+    "sturdy_shield": {
+        "name": "🛡️ Sturdy Shield",
+        "price": 3000,
+        "description": "Activate before playing. Your next gold loss has a 40% chance to be blocked.",
+    },
+    "fortune_shield": {
+        "name": "💎 Fortune Shield",
+        "price": 6000,
+        "description": "Activate before playing. Your next gold loss has a 60% chance to be blocked.",
     },
 }
 
-LUCKY_SHIELD_EFFECT_ID = "lucky_shield_active"
-LUCKY_SHIELD_PROTECT_CHANCE = 0.75
+SHIELD_TIERS = {
+    "lucky_shield": {
+        "effect_id": "lucky_shield_active",
+        "name": "🍀 Lucky Shield",
+        "short_name": "Lucky Shield",
+        "chance": 0.25,
+        "priority": 1,
+    },
+    "sturdy_shield": {
+        "effect_id": "sturdy_shield_active",
+        "name": "🛡️ Sturdy Shield",
+        "short_name": "Sturdy Shield",
+        "chance": 0.40,
+        "priority": 2,
+    },
+    "fortune_shield": {
+        "effect_id": "fortune_shield_active",
+        "name": "💎 Fortune Shield",
+        "short_name": "Fortune Shield",
+        "chance": 0.60,
+        "priority": 3,
+    },
+}
+
+LUCKY_SHIELD_EFFECT_ID = SHIELD_TIERS["lucky_shield"]["effect_id"]
+LUCKY_SHIELD_PROTECT_CHANCE = SHIELD_TIERS["lucky_shield"]["chance"]
 
 SOUND_ITEMS = {
     "cat_girl": {
@@ -130,6 +164,22 @@ SOUND_ITEMS = {
             "The cat noises were not requested, but here we are.",
             "Management refuses to explain this sound.",
             "The vibes are cursed and unfortunately audible.",
+        ],
+    },
+    "come_to_your_house": {
+        "name": "🏠 Come to Your House",
+        "price": 3500,
+        "description": "A suspicious clip with an even more suspicious clarification.",
+        "file": "come_to_your_house.mp3",
+        "message": "has issued a deeply questionable house call.",
+        "attack_title": "🏠 COME TO YOUR HOUSE",
+        "attack_lines": [
+            "Just so we are clear, he meant the house.",
+            "The awkward silence was the loudest part.",
+            "That clarification did not help as much as he hoped.",
+            "The Tavern would like the record corrected immediately.",
+            "A legally important pause has entered the chat.",
+            "This audio clip has been reviewed by absolutely no one.",
         ],
     },
 }
@@ -880,19 +930,46 @@ def get_owned_gameplay_items(user_id):
     return owned
 
 
+def get_active_shield_tiers(user_id):
+    active = []
+
+    for item_id, shield in SHIELD_TIERS.items():
+        count = get_player_effect_quantity(user_id, shield["effect_id"])
+
+        if count > 0:
+            active.append((item_id, shield, count))
+
+    active.sort(key=lambda entry: entry[1]["priority"], reverse=True)
+    return active
+
+
 def get_active_lucky_shields(user_id):
-    return get_player_effect_quantity(user_id, LUCKY_SHIELD_EFFECT_ID)
+    return sum(count for item_id, shield, count in get_active_shield_tiers(user_id))
 
 
-def activate_lucky_shield(user_id):
-    removed = consume_inventory_item(user_id, "lucky_shield", 1)
+def get_best_active_shield(user_id):
+    active = get_active_shield_tiers(user_id)
+
+    if not active:
+        return None, None, 0
+
+    return active[0]
+
+
+def activate_shield_item(user_id, item_id):
+    shield = SHIELD_TIERS.get(item_id)
+
+    if not shield:
+        return False
+
+    removed = consume_inventory_item(user_id, item_id, 1)
 
     if not removed:
         return False
 
     add_player_effect(
         user_id,
-        LUCKY_SHIELD_EFFECT_ID,
+        shield["effect_id"],
         1,
         datetime.now(timezone.utc).isoformat()
     )
@@ -900,72 +977,88 @@ def activate_lucky_shield(user_id):
     return True
 
 
+def activate_lucky_shield(user_id):
+    return activate_shield_item(user_id, "lucky_shield")
+
+
 def try_lucky_shield_protection(user_id):
-    active_count = get_active_lucky_shields(user_id)
+    item_id, shield, active_count = get_best_active_shield(user_id)
 
-    if active_count <= 0:
-        return False, False
+    if not shield or active_count <= 0:
+        return False, False, None
 
-    consumed = consume_player_effect(user_id, LUCKY_SHIELD_EFFECT_ID, 1)
+    consumed = consume_player_effect(user_id, shield["effect_id"], 1)
 
     if not consumed:
-        return False, False
+        return False, False, None
 
-    protected = random.random() < LUCKY_SHIELD_PROTECT_CHANCE
-    return True, protected
+    protected = random.random() < shield["chance"]
+    return True, protected, shield
 
 
-def lucky_shield_attempt_text(attempted, protected, loss_amount):
+def lucky_shield_attempt_text(attempted, protected, loss_amount, shield=None):
     if not attempted:
         return ""
 
+    shield_name = shield["name"] if shield else "🍀 Lucky Shield"
+
     if protected:
         return (
-            f"\n🍀 **Lucky Shield activated!** The loss was blocked and "
+            f"\n{shield_name} **activated!** The loss was blocked and "
             f"**{loss_amount:,} gold** was saved."
         )
 
-    return "\n🍀 **Lucky Shield shattered!** It failed to block the loss."
+    return f"\n{shield_name} **shattered!** It failed to block the loss."
 
 
 def lucky_shield_badge(user_id):
-    active_count = get_active_lucky_shields(user_id)
+    item_id, shield, active_count = get_best_active_shield(user_id)
+    total_count = get_active_lucky_shields(user_id)
 
-    if active_count <= 0:
+    if not shield or total_count <= 0:
         return ""
 
-    if active_count == 1:
-        return " 🍀 **SHIELDED**"
+    if total_count == 1:
+        return f" {shield['name']} **SHIELDED**"
 
-    return f" 🍀 **SHIELDED x{active_count}**"
+    return f" {shield['name']} **SHIELDED x{total_count}**"
 
 
 def lucky_shield_status_text(user_id):
-    active_count = get_active_lucky_shields(user_id)
+    active = get_active_shield_tiers(user_id)
 
-    if active_count <= 0:
+    if not active:
         return ""
 
-    shield_word = "shield" if active_count == 1 else "shields"
+    lines = []
+
+    for item_id, shield, count in active:
+        percent = int(shield["chance"] * 100)
+        lines.append(f"{shield['name']} x{count} — **{percent}%** loss protection")
 
     return (
-        f"🍀 **LUCKY SHIELD ACTIVE x{active_count}**\n"
-        f"You have **{active_count}** armed {shield_word}. Your next possible gold loss "
-        "will trigger one with a **75% chance** to block the loss."
+        "🛡️ **ACTIVE SHIELD PROTECTION**\n"
+        + "\n".join(lines)
+        + "\nYour next possible gold loss will trigger your strongest active shield first."
     )
 
 
 def lucky_shield_short_text(user_id):
-    active_count = get_active_lucky_shields(user_id)
+    active = get_active_shield_tiers(user_id)
 
-    if active_count <= 0:
+    if not active:
         return ""
 
-    return f"🍀 Lucky Shield active x{active_count} — 75% loss protection armed"
+    lines = []
 
+    for item_id, shield, count in active:
+        percent = int(shield["chance"] * 100)
+        lines.append(f"{shield['name']} active x{count} — {percent}% loss protection")
+
+    return "\n".join(lines)
 
 def get_mischief_bonus_line(item_id):
-    # 60% chance to add an extra line
+    # 60% chance to add an extra line so the throws feel more alive.
     if random.random() > 0.60:
         return ""
 
@@ -992,6 +1085,7 @@ def get_mischief_bonus_line(item_id):
         ])
 
     return ""
+
 
 def build_mischief_result_embed(attacker, target, item_id):
     if item_id == "rotten_tomato":
@@ -1464,7 +1558,7 @@ class BlackjackGameView(discord.ui.View):
                     hand_label = f" Hand {hand_index + 1}"
 
                 if player_total > 21:
-                    shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
+                    shield_attempted, shield_protected, shield_used = try_lucky_shield_protection(player_id)
 
                     if shield_protected:
                         adjust_gold(player_id, bet)
@@ -1473,7 +1567,7 @@ class BlackjackGameView(discord.ui.View):
                         result = f"{hand_label} bust — lost **{bet:,} gold**"
                         update_biggest_loss(player_id, bet)
 
-                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, bet)
+                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, bet, shield_used)
                     record_game_stat(player_id, "loss")
                     xp_info = self.award_xp(player_id, 10)
                     result += xp_result_text(xp_info)
@@ -1497,7 +1591,7 @@ class BlackjackGameView(discord.ui.View):
                     update_biggest_win(player_id, bet)
 
                 elif player_total < dealer_total:
-                    shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
+                    shield_attempted, shield_protected, shield_used = try_lucky_shield_protection(player_id)
 
                     if shield_protected:
                         adjust_gold(player_id, bet)
@@ -1506,7 +1600,7 @@ class BlackjackGameView(discord.ui.View):
                         result = f"{hand_label} lost **{bet:,} gold**"
                         update_biggest_loss(player_id, bet)
 
-                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, bet)
+                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, bet, shield_used)
                     record_game_stat(player_id, "loss")
                     xp_info = self.award_xp(player_id, 10)
                     result += xp_result_text(xp_info)
@@ -2090,19 +2184,19 @@ class DiceGameView(discord.ui.View):
 
         if bot_wins and not human_winners:
             for player_id in self.players:
-                shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
+                shield_attempted, shield_protected, shield_used = try_lucky_shield_protection(player_id)
 
                 if shield_protected:
                     record_game_stat(player_id, "loss")
                     xp_info = self.award_xp(player_id, 10)
                     result = "Lost the round, but lost **0 gold**"
-                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
+                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet, shield_used)
                 else:
                     record_game_result(player_id, "loss", -self.bet)
                     xp_info = self.award_xp(player_id, 10)
                     update_biggest_loss(player_id, self.bet)
                     result = f"Lost **{self.bet:,} gold**"
-                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
+                    result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet, shield_used)
 
                 result += xp_result_text(xp_info)
                 result = add_achievement_text(player_id, result)
@@ -2128,19 +2222,19 @@ class DiceGameView(discord.ui.View):
                     result += xp_result_text(xp_info)
 
                 else:
-                    shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
+                    shield_attempted, shield_protected, shield_used = try_lucky_shield_protection(player_id)
 
                     if shield_protected:
                         record_game_stat(player_id, "loss")
                         xp_info = self.award_xp(player_id, 10)
                         result = "Lost the round, but lost **0 gold**"
-                        result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
+                        result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet, shield_used)
                     else:
                         record_game_result(player_id, "loss", -self.bet)
                         xp_info = self.award_xp(player_id, 10)
                         update_biggest_loss(player_id, self.bet)
                         result = f"Lost **{self.bet:,} gold**"
-                        result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
+                        result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet, shield_used)
 
                     result += xp_result_text(xp_info)
 
@@ -2515,7 +2609,7 @@ def build_inventory_embed(target_user):
             gameplay_lines.append(f"{item['name']} x{quantity}")
 
     if active_shields > 0:
-        gameplay_lines.append(f"🍀 **ACTIVE Lucky Shield x{active_shields}** — 75% loss protection armed")
+        gameplay_lines.append(lucky_shield_short_text(user_id))
 
     gameplay_text = "\n".join(gameplay_lines) if gameplay_lines else "No gameplay consumables owned."
 
@@ -2836,6 +2930,20 @@ class PublicStickerCollectionView(discord.ui.View):
         self.collection_id = collection_id
         self.page_index = page_index
 
+        if not self.target_owns_current_sticker():
+            for item in list(self.children):
+                if getattr(item, "custom_id", None) == "public_feature_sticker_button":
+                    self.remove_item(item)
+
+    def current_sticker_id(self):
+        collection = STICKER_COLLECTIONS[self.collection_id]
+        stickers = collection["stickers"]
+        return stickers[self.page_index % len(stickers)]
+
+    def target_owns_current_sticker(self):
+        sticker_id = self.current_sticker_id()
+        return get_player_sticker_quantity(self.target_user.id, sticker_id) > 0
+
     @discord.ui.button(label="Previous", emoji="⬅️", style=discord.ButtonStyle.secondary)
     async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         collection = STICKER_COLLECTIONS[self.collection_id]
@@ -2854,6 +2962,35 @@ class PublicStickerCollectionView(discord.ui.View):
         await interaction.response.edit_message(
             embed=build_sticker_collection_embed(self.target_user, self.collection_id, new_index),
             view=PublicStickerCollectionView(self.target_user, self.collection_id, new_index)
+        )
+
+    @discord.ui.button(label="Feature Sticker", emoji="⭐", style=discord.ButtonStyle.green, custom_id="public_feature_sticker_button")
+    async def public_feature_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.target_user.id:
+            await interaction.response.send_message(
+                f"Only **{self.target_user.display_name}** can set the featured sticker for this book.",
+                ephemeral=True
+            )
+            return
+
+        sticker_id = self.current_sticker_id()
+        sticker = STICKERS[sticker_id]
+
+        if get_player_sticker_quantity(interaction.user.id, sticker_id) <= 0:
+            await interaction.response.send_message(
+                "You can only feature stickers you own.",
+                ephemeral=True
+            )
+            return
+
+        set_featured_sticker(interaction.user.id, sticker_id)
+
+        embed = build_sticker_collection_embed(self.target_user, self.collection_id, self.page_index)
+        embed.set_footer(text=f"Featured sticker set to {sticker['name']}.")
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=PublicStickerCollectionView(self.target_user, self.collection_id, self.page_index)
         )
 
     @discord.ui.button(label="Back to Book", emoji="📖", style=discord.ButtonStyle.blurple)
@@ -3894,7 +4031,7 @@ def build_mischief_market_embed(user_id):
             owned_lines.append(f"{item['name']} x{quantity}")
 
     if active_shields > 0:
-        owned_lines.append(f"🍀 **ACTIVE Lucky Shield x{active_shields}** — 75% loss protection armed")
+        owned_lines.append(lucky_shield_short_text(user_id))
 
     owned_text = "\n".join(owned_lines) if owned_lines else "No consumables owned yet."
 
@@ -3964,7 +4101,7 @@ def build_use_mischief_embed(user_id):
 
     active_shields = get_active_lucky_shields(user_id)
     if active_shields > 0:
-        lines.append(f"🍀 **ACTIVE Lucky Shield x{active_shields}** — 75% loss protection armed")
+        lines.append(lucky_shield_short_text(user_id))
 
     owned_text = "\n".join(lines) if lines else "No usable consumables owned."
 
@@ -4249,29 +4386,31 @@ class UseConsumableSelect(discord.ui.Select):
                 )
                 return
 
-            if item_id == "lucky_shield":
-                activated = activate_lucky_shield(interaction.user.id)
+            if item_id in SHIELD_TIERS:
+                shield = SHIELD_TIERS[item_id]
+                activated = activate_shield_item(interaction.user.id, item_id)
 
                 if not activated:
                     await interaction.response.send_message(
-                        "You do not have a Lucky Shield to activate.",
+                        f"You do not have {shield['name']} to activate.",
                         ephemeral=True
                     )
                     return
 
-                active_count = get_active_lucky_shields(interaction.user.id)
+                active_text = lucky_shield_status_text(interaction.user.id)
+                percent = int(shield["chance"] * 100)
 
                 embed = discord.Embed(
-                    title="🍀 LUCKY SHIELD ACTIVE",
+                    title=f"{shield['name']} ACTIVE",
                     description=(
                         "Your next possible gold loss is now protected.\n\n"
-                        "Block chance: **75%**\n"
-                        f"Active Lucky Shields: **{active_count}**\n\n"
-                        "You will see a 🍀 **SHIELDED** badge next to your name at tables and in your inventory while it is armed."
+                        f"This shield block chance: **{percent}%**\n\n"
+                        f"{active_text}\n\n"
+                        "You will see a **SHIELDED** badge next to your name at tables and in your inventory while protection is armed."
                     ),
                     color=discord.Color.green()
                 )
-                embed.set_footer(text="It is consumed when it attempts to protect you, whether it succeeds or shatters.")
+                embed.set_footer(text="A shield is consumed when it attempts to protect you, whether it succeeds or shatters.")
 
                 await interaction.response.edit_message(
                     content=None,
@@ -5002,9 +5141,9 @@ class Tavern(commands.Cog):
     @app_commands.command(name="profile", description="View a Tavern profile")
     @app_commands.describe(user="Player to view")
     async def profile(self, interaction: discord.Interaction, user: Optional[discord.User] = None):
-        if not is_tavern_channel(interaction):
+        if not is_tavern_or_shop_channel(interaction):
             await interaction.response.send_message(
-                "🍺 TrophyBot only runs in **The Tavern**.",
+                "🍺 Use `/profile` in **The Tavern** or the Tavern shop channel.",
                 ephemeral=True
             )
             return
@@ -5029,9 +5168,9 @@ class Tavern(commands.Cog):
 
     @app_commands.command(name="tavern", description="Open The Tavern menu")
     async def tavern(self, interaction: discord.Interaction):
-        if not is_tavern_channel(interaction):
+        if not is_tavern_or_shop_channel(interaction):
             await interaction.response.send_message(
-                "🍺 TrophyBot only runs in **The Tavern**.",
+                "🍺 Use `/profile` in **The Tavern** or the Tavern shop channel.",
                 ephemeral=True
             )
             return
