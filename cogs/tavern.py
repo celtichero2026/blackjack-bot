@@ -3666,10 +3666,6 @@ class HangmanStartView(discord.ui.View):
         )
         game_view.message = public_message
 
-        await interaction.followup.send(
-            f"🪦 Solo Hangman started: {public_message.jump_url}",
-            ephemeral=True
-        )
 
     @discord.ui.button(label="Multiplayer", emoji="👥", style=discord.ButtonStyle.blurple)
     async def multiplayer_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -3707,10 +3703,6 @@ class HangmanStartView(discord.ui.View):
         )
         lobby_view.message = public_message
 
-        await interaction.followup.send(
-            f"🪦 Multiplayer Hangman table posted: {public_message.jump_url}",
-            ephemeral=True
-        )
 
 
 class HangmanLobbyView(discord.ui.View):
@@ -3941,9 +3933,14 @@ class HangmanPageButton(discord.ui.Button):
             )
             return
 
-        if interaction.user.id != self.view.current_guesser_id():
+        allowed_page_users = set(self.view.guessers)
+        allowed_page_users.add(self.view.host_id)
+        if self.view.undertaker_id:
+            allowed_page_users.add(self.view.undertaker_id)
+
+        if interaction.user.id not in allowed_page_users:
             await interaction.response.send_message(
-                "Only the current guesser can switch letter pages.",
+                "Only players in this Hangman game can switch letter pages.",
                 ephemeral=True
             )
             return
