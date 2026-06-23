@@ -152,7 +152,26 @@ DAILY_MATH_CHALLENGE_GOLD = 100
 CONFETTI_DUD_GIF = os.getenv("CONFETTI_DUD_GIF", "").strip()
 STICKER_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/stickers"
 GIF_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/gifs"
+IMAGE_ASSET_BASE_URL = "https://raw.githubusercontent.com/celtichero2026/blackjack-bot/main/assets/images"
 SOUND_ASSET_FOLDER = "assets/sounds"
+
+HANGMAN_WORDS_FOLDER = "assets/words"
+HANGMAN_MIN_WORD_LENGTH = 4
+HANGMAN_MAX_WORD_LENGTH = 12
+HANGMAN_MAX_MISTAKES = 6
+HANGMAN_ACTIVE_CHANNELS = {}
+HANGMAN_WORD_CACHE = None
+HANGMAN_VOWELS = "AEIOUY"
+HANGMAN_CONSONANTS = "BCDFGHJKLMNPQRSTVWXZ"
+HANGMAN_GUESSER_WIN_GOLD = 25
+HANGMAN_GUESSER_WIN_XP = 30
+HANGMAN_UNDERTAKER_LOSE_XP = 10
+HANGMAN_UNDERTAKER_WIN_GOLD = 75
+HANGMAN_UNDERTAKER_WIN_XP = 40
+HANGMAN_GUESSER_LOSE_XP = 15
+HANGMAN_SOLO_WIN_GOLD = 25
+HANGMAN_SOLO_WIN_XP = 30
+HANGMAN_SOLO_LOSE_XP = 10
 
 SHOT_GIF_FILES = [
     "shot_1.gif",
@@ -3426,6 +3445,758 @@ class BetModal(discord.ui.Modal):
             )
 
 
+
+def clean_hangman_word(value):
+    return (value or "").strip().lower()
+
+
+def load_hangman_words():
+    global HANGMAN_WORD_CACHE
+
+    if HANGMAN_WORD_CACHE is not None:
+        return HANGMAN_WORD_CACHE
+
+    words = set()
+
+    if not os.path.isdir(HANGMAN_WORDS_FOLDER):
+        HANGMAN_WORD_CACHE = words
+        return words
+
+    for root, dirs, files in os.walk(HANGMAN_WORDS_FOLDER):
+        for file_name in files:
+            if not file_name.lower().endswith(".txt"):
+                continue
+
+            path = os.path.join(root, file_name)
+
+            try:
+                with open(path, "r", encoding="utf-8") as word_file:
+                    for line in word_file:
+                        word = clean_hangman_word(line)
+
+                        if (
+                            word.isalpha()
+                            and HANGMAN_MIN_WORD_LENGTH <= len(word) <= HANGMAN_MAX_WORD_LENGTH
+                        ):
+                            words.add(word)
+            except Exception:
+                continue
+
+    HANGMAN_WORD_CACHE = words
+    return words
+
+
+def validate_hangman_word(word):
+    cleaned = clean_hangman_word(word)
+
+    if not cleaned:
+        return False, "Enter a word first.", cleaned
+
+    if not cleaned.isalpha():
+        return False, "Words can only use letters. No spaces, hyphens, apostrophes, or numbers.", cleaned
+
+    if len(cleaned) < HANGMAN_MIN_WORD_LENGTH or len(cleaned) > HANGMAN_MAX_WORD_LENGTH:
+        return False, f"Words must be {HANGMAN_MIN_WORD_LENGTH}-{HANGMAN_MAX_WORD_LENGTH} letters long.", cleaned
+
+    valid_words = load_hangman_words()
+
+    if not valid_words:
+        return False, "The Hangman word list could not be loaded from `assets/words/`.", cleaned
+
+    if cleaned not in valid_words:
+        return False, "That word was not found in the Tavern word list.", cleaned
+
+    return True, "", cleaned
+
+
+def get_random_hangman_word():
+    valid_words = list(load_hangman_words())
+
+    if not valid_words:
+        return ""
+
+    return random.choice(valid_words)
+
+
+def get_hangman_stage_image_url(mistakes):
+    mistakes = max(0, min(HANGMAN_MAX_MISTAKES, int(mistakes)))
+    return f"{IMAGE_ASSET_BASE_URL}/hangman/stage_{mistakes}.png"
+
+
+def hangman_board_text(word, guessed_letters):
+    return " ".join(
+        letter.upper() if letter in guessed_letters else "_"
+        for letter in word
+    )
+
+
+def format_hangman_guessers(guessers):
+    if not guessers:
+        return "Open"
+
+    return "\n".join(
+        f"{index}. <@{player_id}>"
+        for index, player_id in enumerate(guessers, start=1)
+    )
+
+
+def is_hangman_active(channel_id):
+    return channel_id in HANGMAN_ACTIVE_CHANNELS
+
+
+def hangman_active_text(channel_id):
+    game = HANGMAN_ACTIVE_CHANNELS.get(channel_id)
+
+    if not game:
+        return "🪦 A Hangman game is active in this channel."
+
+    return "🪦 A Hangman game is active in this channel. Finish that game before starting another."
+
+
+class HangmanWordModal(discord.ui.Modal, title="🪦 Undertaker Word"):
+    def __init__(self, lobby_view):
+        super().__init__(timeout=180)
+        self.lobby_view = lobby_view
+
+        self.word_input = discord.ui.TextInput(
+            label="Hidden word",
+            placeholder="4-12 letters, real word only",
+            min_length=HANGMAN_MIN_WORD_LENGTH,
+            max_length=HANGMAN_MAX_WORD_LENGTH,
+            required=True
+        )
+        self.add_item(self.word_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != self.lobby_view.undertaker_id:
+            await interaction.response.send_message(
+                "Only the Undertaker can set the hidden word.",
+                ephemeral=True
+            )
+            return
+
+        is_valid, message, word = validate_hangman_word(str(self.word_input.value))
+
+        if not is_valid:
+            await interaction.response.send_message(
+                f"🚫 {message}",
+                ephemeral=True
+            )
+            return
+
+        self.lobby_view.word = word
+        self.lobby_view.word_set_by = interaction.user.id
+
+        if self.lobby_view.message:
+            try:
+                await self.lobby_view.message.edit(
+                    embed=self.lobby_view.build_lobby_embed(),
+                    view=self.lobby_view
+                )
+            except Exception:
+                pass
+
+        await interaction.response.send_message(
+            "🪦 Word accepted. The host can start the game when ready.",
+            ephemeral=True
+        )
+
+
+class HangmanStartView(discord.ui.View):
+    def __init__(self, owner_id):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Open your own Hangman menu from The Tavern.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Solo", emoji="🧍", style=discord.ButtonStyle.green)
+    async def solo_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_shop_channel(interaction):
+            await interaction.response.send_message(
+                "🪦 Hangman is public. Start it in The Tavern channel so the shop stays clean.",
+                ephemeral=True
+            )
+            return
+
+        if is_math_drill_active(interaction.channel_id):
+            await interaction.response.send_message(
+                math_focus_block_text(interaction.channel_id),
+                ephemeral=True
+            )
+            return
+
+        if is_hangman_active(interaction.channel_id):
+            await interaction.response.send_message(
+                hangman_active_text(interaction.channel_id),
+                ephemeral=True
+            )
+            return
+
+        word = get_random_hangman_word()
+
+        if not word:
+            await interaction.response.send_message(
+                "🪦 I could not load any Hangman words from `assets/words/`.",
+                ephemeral=True
+            )
+            return
+
+        game_view = HangmanGameView(
+            channel_id=interaction.channel_id,
+            mode="solo",
+            host_id=interaction.user.id,
+            undertaker_id=None,
+            guessers=[interaction.user.id],
+            word=word
+        )
+        HANGMAN_ACTIVE_CHANNELS[interaction.channel_id] = game_view
+
+        await interaction.response.defer(ephemeral=True)
+        public_message = await interaction.channel.send(
+            embed=game_view.build_game_embed(),
+            view=game_view
+        )
+        game_view.message = public_message
+
+        await interaction.followup.send(
+            f"🪦 Solo Hangman started: {public_message.jump_url}",
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Multiplayer", emoji="👥", style=discord.ButtonStyle.blurple)
+    async def multiplayer_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_shop_channel(interaction):
+            await interaction.response.send_message(
+                "🪦 Hangman is public. Start it in The Tavern channel so the shop stays clean.",
+                ephemeral=True
+            )
+            return
+
+        if is_math_drill_active(interaction.channel_id):
+            await interaction.response.send_message(
+                math_focus_block_text(interaction.channel_id),
+                ephemeral=True
+            )
+            return
+
+        if is_hangman_active(interaction.channel_id):
+            await interaction.response.send_message(
+                hangman_active_text(interaction.channel_id),
+                ephemeral=True
+            )
+            return
+
+        lobby_view = HangmanLobbyView(
+            channel_id=interaction.channel_id,
+            host_id=interaction.user.id
+        )
+        HANGMAN_ACTIVE_CHANNELS[interaction.channel_id] = lobby_view
+
+        await interaction.response.defer(ephemeral=True)
+        public_message = await interaction.channel.send(
+            embed=lobby_view.build_lobby_embed(),
+            view=lobby_view
+        )
+        lobby_view.message = public_message
+
+        await interaction.followup.send(
+            f"🪦 Multiplayer Hangman table posted: {public_message.jump_url}",
+            ephemeral=True
+        )
+
+
+class HangmanLobbyView(discord.ui.View):
+    def __init__(self, channel_id, host_id):
+        super().__init__(timeout=900)
+        self.channel_id = channel_id
+        self.host_id = host_id
+        self.undertaker_id = None
+        self.guessers = []
+        self.word = ""
+        self.word_set_by = None
+        self.message = None
+
+    def build_lobby_embed(self):
+        undertaker_text = "Open"
+        if self.undertaker_id:
+            undertaker_text = f"<@{self.undertaker_id}>"
+
+        word_status = "Not set"
+        if self.word:
+            word_status = "✅ Set privately"
+
+        embed = discord.Embed(
+            title="🪦 Hangman Table",
+            description=(
+                f"**Host:** <@{self.host_id}>\n"
+                f"**Undertaker:** {undertaker_text}\n"
+                f"**Hidden Word:** {word_status}\n\n"
+                f"**Guessers:**\n{format_hangman_guessers(self.guessers)}\n\n"
+                "The host creates the table, but the Undertaker is chosen separately.\n"
+                "The Undertaker must set a valid 4-12 letter word before the game starts."
+            ),
+            color=discord.Color.dark_gold()
+        )
+        embed.set_footer(text="Word rules: real word list only, letters only, no spaces/hyphens/names/abbreviations.")
+        return embed
+
+    async def interaction_check(self, interaction):
+        if HANGMAN_ACTIVE_CHANNELS.get(self.channel_id) is not self:
+            await interaction.response.send_message(
+                "This Hangman table is no longer active.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    async def on_timeout(self):
+        if HANGMAN_ACTIVE_CHANNELS.get(self.channel_id) is self:
+            HANGMAN_ACTIVE_CHANNELS.pop(self.channel_id, None)
+
+    @discord.ui.button(label="Become Undertaker", emoji="🪦", style=discord.ButtonStyle.secondary)
+    async def become_undertaker_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id in self.guessers:
+            await interaction.response.send_message(
+                "You cannot be both Undertaker and guesser.",
+                ephemeral=True
+            )
+            return
+
+        if self.undertaker_id and self.undertaker_id != interaction.user.id:
+            await interaction.response.send_message(
+                "The Undertaker slot is already taken.",
+                ephemeral=True
+            )
+            return
+
+        self.undertaker_id = interaction.user.id
+        self.word = ""
+        self.word_set_by = None
+
+        await interaction.response.edit_message(
+            embed=self.build_lobby_embed(),
+            view=self
+        )
+
+    @discord.ui.button(label="Join Guessers", emoji="🔤", style=discord.ButtonStyle.green)
+    async def join_guesser_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id == self.undertaker_id:
+            await interaction.response.send_message(
+                "The Undertaker cannot also be a guesser.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.id in self.guessers:
+            await interaction.response.send_message(
+                "You are already guessing.",
+                ephemeral=True
+            )
+            return
+
+        if len(self.guessers) >= 3:
+            await interaction.response.send_message(
+                "This Hangman table already has 3 guessers.",
+                ephemeral=True
+            )
+            return
+
+        self.guessers.append(interaction.user.id)
+
+        await interaction.response.edit_message(
+            embed=self.build_lobby_embed(),
+            view=self
+        )
+
+    @discord.ui.button(label="Set Word", emoji="✍️", style=discord.ButtonStyle.blurple)
+    async def set_word_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.undertaker_id:
+            await interaction.response.send_message(
+                "Someone needs to become the Undertaker first.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.id != self.undertaker_id:
+            await interaction.response.send_message(
+                "Only the Undertaker can set the hidden word.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_modal(HangmanWordModal(self))
+
+    @discord.ui.button(label="Start Game", emoji="▶️", style=discord.ButtonStyle.blurple)
+    async def start_game_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.host_id:
+            await interaction.response.send_message(
+                "Only the table host can start the game.",
+                ephemeral=True
+            )
+            return
+
+        if not self.undertaker_id:
+            await interaction.response.send_message(
+                "The table needs an Undertaker first.",
+                ephemeral=True
+            )
+            return
+
+        if not self.guessers:
+            await interaction.response.send_message(
+                "The table needs at least one guesser.",
+                ephemeral=True
+            )
+            return
+
+        if not self.word:
+            await interaction.response.send_message(
+                "The Undertaker needs to set the hidden word first.",
+                ephemeral=True
+            )
+            return
+
+        game_view = HangmanGameView(
+            channel_id=self.channel_id,
+            mode="multiplayer",
+            host_id=self.host_id,
+            undertaker_id=self.undertaker_id,
+            guessers=self.guessers,
+            word=self.word
+        )
+        game_view.message = self.message
+        HANGMAN_ACTIVE_CHANNELS[self.channel_id] = game_view
+
+        await interaction.response.edit_message(
+            embed=game_view.build_game_embed(),
+            view=game_view
+        )
+
+    @discord.ui.button(label="Cancel", emoji="✖️", style=discord.ButtonStyle.red)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.host_id:
+            await interaction.response.send_message(
+                "Only the table host can cancel this Hangman table.",
+                ephemeral=True
+            )
+            return
+
+        HANGMAN_ACTIVE_CHANNELS.pop(self.channel_id, None)
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="🪦 Hangman Cancelled",
+                description="The Hangman table was closed.",
+                color=discord.Color.dark_gold()
+            ),
+            view=None
+        )
+
+
+class HangmanLetterButton(discord.ui.Button):
+    def __init__(self, letter):
+        super().__init__(
+            label=letter,
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"hangman_letter_{letter}_{random.randint(1, 999999)}"
+        )
+        self.letter = letter.lower()
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.handle_letter_guess(interaction, self.letter)
+
+
+class HangmanPageButton(discord.ui.Button):
+    def __init__(self, target_page):
+        label = "Consonants" if target_page == "consonants" else "Vowels"
+        emoji = "🔤" if target_page == "consonants" else "🅰️"
+        super().__init__(
+            label=label,
+            emoji=emoji,
+            style=discord.ButtonStyle.blurple,
+            custom_id=f"hangman_page_{target_page}_{random.randint(1, 999999)}"
+        )
+        self.target_page = target_page
+
+    async def callback(self, interaction: discord.Interaction):
+        if HANGMAN_ACTIVE_CHANNELS.get(self.view.channel_id) is not self.view:
+            await interaction.response.send_message(
+                "This Hangman game is no longer active.",
+                ephemeral=True
+            )
+            return
+
+        if self.view.finished:
+            await interaction.response.send_message(
+                "This Hangman game is already finished.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.id != self.view.current_guesser_id():
+            await interaction.response.send_message(
+                "Only the current guesser can switch letter pages.",
+                ephemeral=True
+            )
+            return
+
+        self.view.page = self.target_page
+        self.view.refresh_letter_buttons()
+        await interaction.response.edit_message(
+            embed=self.view.build_game_embed(),
+            view=self.view
+        )
+
+
+class HangmanQuitButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="End Game",
+            emoji="✖️",
+            style=discord.ButtonStyle.red,
+            custom_id=f"hangman_quit_{random.randint(1, 999999)}"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.view.host_id:
+            await interaction.response.send_message(
+                "Only the host can end this Hangman game.",
+                ephemeral=True
+            )
+            return
+
+        HANGMAN_ACTIVE_CHANNELS.pop(self.view.channel_id, None)
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="🪦 Hangman Ended",
+                description="The host ended the Hangman game.",
+                color=discord.Color.dark_gold()
+            ),
+            view=None
+        )
+
+
+class HangmanGameView(discord.ui.View):
+    def __init__(self, channel_id, mode, host_id, undertaker_id, guessers, word):
+        super().__init__(timeout=1200)
+        self.channel_id = channel_id
+        self.mode = mode
+        self.host_id = host_id
+        self.undertaker_id = undertaker_id
+        self.guessers = list(guessers)
+        self.word = clean_hangman_word(word)
+        self.guessed_letters = set()
+        self.wrong_letters = []
+        self.mistakes = 0
+        self.turn_index = 0
+        self.page = "vowels"
+        self.finished = False
+        self.level_ups = []
+        self.message = None
+        self.refresh_letter_buttons()
+
+    async def on_timeout(self):
+        if HANGMAN_ACTIVE_CHANNELS.get(self.channel_id) is self:
+            HANGMAN_ACTIVE_CHANNELS.pop(self.channel_id, None)
+
+    def current_guesser_id(self):
+        if not self.guessers:
+            return None
+
+        return self.guessers[self.turn_index % len(self.guessers)]
+
+    def advance_turn(self):
+        if self.guessers:
+            self.turn_index = (self.turn_index + 1) % len(self.guessers)
+
+    def can_user_use_game(self, interaction):
+        if HANGMAN_ACTIVE_CHANNELS.get(self.channel_id) is not self:
+            try:
+                interaction.response.send_message("This Hangman game is no longer active.", ephemeral=True)
+            except Exception:
+                pass
+            return False
+
+        return True
+
+    def refresh_letter_buttons(self):
+        self.clear_items()
+        letters = HANGMAN_VOWELS if self.page == "vowels" else HANGMAN_CONSONANTS
+
+        for letter in letters:
+            if letter.lower() in self.guessed_letters:
+                continue
+            self.add_item(HangmanLetterButton(letter))
+
+        next_page = "consonants" if self.page == "vowels" else "vowels"
+        self.add_item(HangmanPageButton(next_page))
+        self.add_item(HangmanQuitButton())
+
+    def build_game_embed(self, result_text=""):
+        board = hangman_board_text(self.word, self.guessed_letters)
+        wrong_text = ", ".join(letter.upper() for letter in self.wrong_letters) or "None"
+        current_text = "Game over" if self.finished else f"<@{self.current_guesser_id()}>"
+        undertaker_text = "🤖 Tavern Bot" if self.mode == "solo" else f"<@{self.undertaker_id}>"
+
+        description = (
+            f"**Word:** `{board}`\n"
+            f"**Wrong Letters:** {wrong_text}\n"
+            f"**Mistakes:** {self.mistakes} / {HANGMAN_MAX_MISTAKES}\n\n"
+            f"**Undertaker:** {undertaker_text}\n"
+            f"**Guessers:**\n{format_hangman_guessers(self.guessers)}\n\n"
+            f"**Current Guesser:** {current_text}\n"
+            f"**Letter Page:** {self.page.title()}"
+        )
+
+        if result_text:
+            description += f"\n\n{result_text}"
+
+        embed = discord.Embed(
+            title="🪦 Hangman",
+            description=description,
+            color=discord.Color.dark_gold()
+        )
+        embed.set_image(url=get_hangman_stage_image_url(self.mistakes))
+        embed.set_footer(text="Vowels and consonants are separate pages. Guessed letters disappear from the buttons.")
+        return embed
+
+    def word_is_complete(self):
+        return all(letter in self.guessed_letters for letter in self.word)
+
+    def award_xp(self, player_id, amount):
+        xp_info = award_tavern_xp(player_id, amount, "hangman")
+
+        if xp_info and xp_info.get("level_up"):
+            self.level_ups.append((player_id, xp_info))
+
+        return xp_info
+
+    def finish_results_text(self, guessers_win):
+        self.finished = True
+        HANGMAN_ACTIVE_CHANNELS.pop(self.channel_id, None)
+
+        if self.mode == "solo":
+            if guessers_win:
+                add_gold(self.guessers[0], HANGMAN_SOLO_WIN_GOLD)
+                xp_info = self.award_xp(self.guessers[0], HANGMAN_SOLO_WIN_XP)
+                text = (
+                    f"🎉 **Solved!** The word was **{self.word.upper()}**.\n"
+                    f"<@{self.guessers[0]}> earned **{HANGMAN_SOLO_WIN_GOLD:,} gold**"
+                    f"{xp_result_text(xp_info)}"
+                )
+            else:
+                xp_info = self.award_xp(self.guessers[0], HANGMAN_SOLO_LOSE_XP)
+                text = (
+                    f"💀 **The word survived.** The word was **{self.word.upper()}**.\n"
+                    f"<@{self.guessers[0]}> earned participation XP"
+                    f"{xp_result_text(xp_info)}"
+                )
+
+            return text
+
+        lines = []
+
+        if guessers_win:
+            lines.append(f"🎉 **Guessers win!** The word was **{self.word.upper()}**.")
+            lines.append(f"Each guesser earns **{HANGMAN_GUESSER_WIN_GOLD:,} gold** and **{HANGMAN_GUESSER_WIN_XP} XP**.")
+
+            for player_id in self.guessers:
+                add_gold(player_id, HANGMAN_GUESSER_WIN_GOLD)
+                self.award_xp(player_id, HANGMAN_GUESSER_WIN_XP)
+
+            self.award_xp(self.undertaker_id, HANGMAN_UNDERTAKER_LOSE_XP)
+            lines.append(f"The Undertaker earns **{HANGMAN_UNDERTAKER_LOSE_XP} XP** for hosting the word.")
+        else:
+            lines.append(f"💀 **Undertaker wins!** The word was **{self.word.upper()}**.")
+            add_gold(self.undertaker_id, HANGMAN_UNDERTAKER_WIN_GOLD)
+            self.award_xp(self.undertaker_id, HANGMAN_UNDERTAKER_WIN_XP)
+            lines.append(f"<@{self.undertaker_id}> earns **{HANGMAN_UNDERTAKER_WIN_GOLD:,} gold** and **{HANGMAN_UNDERTAKER_WIN_XP} XP**.")
+            lines.append(f"Each guesser earns **{HANGMAN_GUESSER_LOSE_XP} XP** for playing.")
+
+            for player_id in self.guessers:
+                self.award_xp(player_id, HANGMAN_GUESSER_LOSE_XP)
+
+        return "\n".join(lines)
+
+    async def send_level_messages_after_finish(self, interaction):
+        await send_level_up_messages(interaction, self.level_ups)
+
+    async def handle_letter_guess(self, interaction: discord.Interaction, letter):
+        if HANGMAN_ACTIVE_CHANNELS.get(self.channel_id) is not self:
+            await interaction.response.send_message(
+                "This Hangman game is no longer active.",
+                ephemeral=True
+            )
+            return
+
+        if self.finished:
+            await interaction.response.send_message(
+                "This Hangman game is already finished.",
+                ephemeral=True
+            )
+            return
+
+        current_player = self.current_guesser_id()
+
+        if interaction.user.id != current_player:
+            await interaction.response.send_message(
+                "It is not your turn to guess.",
+                ephemeral=True
+            )
+            return
+
+        if letter in self.guessed_letters:
+            await interaction.response.send_message(
+                "That letter has already been guessed.",
+                ephemeral=True
+            )
+            return
+
+        self.guessed_letters.add(letter)
+
+        result_text = ""
+        if letter in self.word:
+            result_text = f"✅ <@{interaction.user.id}> guessed **{letter.upper()}** correctly."
+        else:
+            self.wrong_letters.append(letter)
+            self.mistakes += 1
+            result_text = f"❌ <@{interaction.user.id}> guessed **{letter.upper()}**. That letter is not in the word."
+
+        game_over = False
+
+        if self.word_is_complete():
+            result_text += "\n\n" + self.finish_results_text(True)
+            game_over = True
+        elif self.mistakes >= HANGMAN_MAX_MISTAKES:
+            result_text += "\n\n" + self.finish_results_text(False)
+            game_over = True
+        else:
+            self.advance_turn()
+
+        if not game_over:
+            self.refresh_letter_buttons()
+            await interaction.response.edit_message(
+                embed=self.build_game_embed(result_text),
+                view=self
+            )
+            return
+
+        self.clear_items()
+        await interaction.response.edit_message(
+            embed=self.build_game_embed(result_text),
+            view=None
+        )
+        await self.send_level_messages_after_finish(interaction)
+
+
 class TavernView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -3502,6 +4273,29 @@ class TavernView(discord.ui.View):
         await interaction.response.send_message(
             embed=build_math_drill_start_embed(interaction.user.id),
             view=MathDrillStartView(interaction.user.id),
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Hangman", emoji="🪦", style=discord.ButtonStyle.secondary)
+    async def hangman_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if is_math_drill_active(interaction.channel_id):
+            await interaction.response.send_message(
+                math_focus_block_text(interaction.channel_id),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="🪦 Hangman",
+                description=(
+                    "Choose a Hangman mode.\n\n"
+                    "**Solo:** Tavern Bot picks the word.\n"
+                    "**Multiplayer:** A host creates the table, an Undertaker sets the word privately, and 1-3 guessers take turns."
+                ),
+                color=discord.Color.dark_gold()
+            ),
+            view=HangmanStartView(interaction.user.id),
             ephemeral=True
         )
 
@@ -6409,6 +7203,8 @@ class Tavern(commands.Cog):
                 "💰 Balance\n"
                 "👤 Profile\n"
                 "🏪 Shop\n"
+                "🧠 Math Drills\n"
+                "🪦 Hangman\n"
                 "🃏 Blackjack\n"
                 "🎲 Dice\n"
                 "🏆 Leaderboard"
