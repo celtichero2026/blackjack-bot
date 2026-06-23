@@ -1568,6 +1568,7 @@ class BlackjackTableView(discord.ui.View):
         )
 
 
+
 class DiceTableView(discord.ui.View):
     def __init__(self, host_id, bet):
         super().__init__(timeout=None)
@@ -1585,14 +1586,6 @@ class DiceTableView(discord.ui.View):
                 f"Dice error: `{error}`",
                 ephemeral=True
             )
-
-    def award_xp(self, player_id, amount, level_ups):
-        xp_info = add_xp(player_id, amount)
-
-        if xp_info and xp_info.get("level_up"):
-            level_ups.append((player_id, xp_info))
-
-        return xp_info
 
     def build_table_embed(self):
         player_list = "\n".join(
@@ -1619,7 +1612,8 @@ class DiceTableView(discord.ui.View):
             description=(
                 f"**Bet:** {self.bet:,} gold\n\n"
                 f"**Players:**\n{player_list}\n\n"
-                "Each player rolls **3 dice**. Highest total wins."
+                "Each player takes **3 turns** rolling one die at a time.\n"
+                "Highest total after all 3 rolls wins."
             ),
             color=discord.Color.dark_gold()
         )
@@ -1670,7 +1664,6 @@ class DiceTableView(discord.ui.View):
             view=self
         )
 
-
     @discord.ui.button(label="Use Consumable", emoji="🎭", style=discord.ButtonStyle.secondary)
     async def use_consumable_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await send_usable_inventory_menu(
@@ -1678,18 +1671,18 @@ class DiceTableView(discord.ui.View):
             allowed_target_ids=self.players
         )
 
-    @discord.ui.button(label="Roll Dice", emoji="🎲", style=discord.ButtonStyle.red)
-    async def roll_dice(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Start Dice", emoji="▶️", style=discord.ButtonStyle.red)
+    async def start_dice(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.host_id:
             await interaction.response.send_message(
-                "Only the host can roll.",
+                "Only the host can start the dice game.",
                 ephemeral=True
             )
             return
 
         if len(self.players) < 2 and not self.bot_added:
             await interaction.response.send_message(
-                "🎲 You need at least **one opponent** or the **bot player** before rolling.",
+                "🎲 You need at least **one opponent** or the **bot player** before starting.",
                 ephemeral=True
             )
             return
@@ -1705,21 +1698,148 @@ class DiceTableView(discord.ui.View):
         for player_id in self.players:
             record_wager(player_id, self.bet)
 
-        rolls = {}
-        totals = {}
+        game_view = DiceGameView(
+            host_id=self.host_id,
+            players=self.players,
+            bot_added=self.bot_added,
+            bet=self.bet
+        )
+
+        await interaction.response.edit_message(
+            embed=game_view.build_embed(),
+            view=game_view
+        )
+
+
+class DiceGameView(discord.ui.View):
+    def __init__(self, host_id, players, bot_added, bet):
+        super().__init__(timeout=300)
+        self.host_id = host_id
+        self.players = list(players)
+        self.bot_added = bot_added
+        self.bet = bet
+        self.rolls = {player_id: [] for player_id in self.players}
+        self.bot_rolls = []
+        self.turn_order = list(self.players)
+
+        if self.bot_added:
+            self.turn_order.append("bot")
+
+        self.round_index = 0
+        self.turn_index = 0
+        self.level_ups = []
+
+    async def on_error(self, interaction, error, item):
+        import traceback
+        traceback.print_exception(type(error), error, error.__traceback__)
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                f"Dice turn error: `{error}`",
+                ephemeral=True
+            )
+
+    def award_xp(self, player_id, amount):
+        xp_info = add_xp(player_id, amount)
+
+        if xp_info and xp_info.get("level_up"):
+            self.level_ups.append((player_id, xp_info))
+
+        return xp_info
+
+    def is_complete(self):
+        return self.round_index >= 3
+
+    def current_actor(self):
+        if self.is_complete():
+            return None
+
+        return self.turn_order[self.turn_index]
+
+    def current_turn_text(self):
+        actor = self.current_actor()
+
+        if actor == "bot":
+            return f"🤖 Tavern Bot is rolling for round **{self.round_index + 1} / 3**."
+
+        return f"<@{actor}> is up for round **{self.round_index + 1} / 3**."
+
+    def advance_turn(self):
+        self.turn_index += 1
+
+        if self.turn_index >= len(self.turn_order):
+            self.turn_index = 0
+            self.round_index += 1
+
+    def roll_for_actor(self, actor):
+        roll = random.randint(1, 6)
+
+        if actor == "bot":
+            self.bot_rolls.append(roll)
+        else:
+            self.rolls[actor].append(roll)
+
+        self.advance_turn()
+        return roll
+
+    def process_bot_turns(self):
+        bot_rolls = []
+
+        while not self.is_complete() and self.current_actor() == "bot":
+            bot_rolls.append(self.roll_for_actor("bot"))
+
+        return bot_rolls
+
+    def format_rolls(self, values):
+        shown = [str(value) for value in values]
+
+        while len(shown) < 3:
+            shown.append("—")
+
+        return " + ".join(shown)
+
+    def build_embed(self, last_roll_text=""):
+        description = f"**Bet:** {self.bet:,} gold\n\n"
+
+        if last_roll_text:
+            description += f"{last_roll_text}\n\n"
+
+        if not self.is_complete():
+            description += f"**Current Turn:** {self.current_turn_text()}\n\n"
+
+        description += "**Roll Board:**\n"
 
         for player_id in self.players:
-            player_rolls = [random.randint(1, 6) for _ in range(3)]
-            rolls[player_id] = player_rolls
-            totals[player_id] = sum(player_rolls)
+            player_rolls = self.rolls[player_id]
+            total = sum(player_rolls)
+            description += (
+                f"<@{player_id}>: **{self.format_rolls(player_rolls)}** "
+                f"= **{total}**\n"
+            )
 
-        bot_rolls = None
-        bot_total = None
         if self.bot_added:
-            bot_rolls = [random.randint(1, 6) for _ in range(3)]
-            bot_total = sum(bot_rolls)
+            description += (
+                f"🤖 Tavern Bot: **{self.format_rolls(self.bot_rolls)}** "
+                f"= **{sum(self.bot_rolls)}**\n"
+            )
 
+        description += "\nPress **Roll** when it is your turn."
+
+        return discord.Embed(
+            title="🎲 Dice Game",
+            description=description,
+            color=discord.Color.dark_gold()
+        )
+
+    def build_results_embed(self):
+        totals = {
+            player_id: sum(player_rolls)
+            for player_id, player_rolls in self.rolls.items()
+        }
+
+        bot_total = sum(self.bot_rolls) if self.bot_added else None
         all_totals = list(totals.values())
+
         if bot_total is not None:
             all_totals.append(bot_total)
 
@@ -1732,14 +1852,15 @@ class DiceTableView(discord.ui.View):
 
         bot_wins = self.bot_added and bot_total == highest
 
-        description = f"**Bet:** {self.bet:,} gold\n\n**Best of 3 Rolls:**\n"
+        description = f"**Bet:** {self.bet:,} gold\n\n**Final Rolls:**\n"
 
-        for player_id, player_rolls in rolls.items():
+        for player_id in self.players:
+            player_rolls = self.rolls[player_id]
             roll_text = " + ".join(str(roll) for roll in player_rolls)
-            description += f"<@{player_id}> rolled **{roll_text} = {totals[player_id]}**\n"
+            description += f"<@{player_id}> rolled **{roll_text} = {sum(player_rolls)}**\n"
 
         if self.bot_added:
-            roll_text = " + ".join(str(roll) for roll in bot_rolls)
+            roll_text = " + ".join(str(roll) for roll in self.bot_rolls)
             description += f"🤖 Tavern Bot rolled **{roll_text} = {bot_total}**\n"
 
         description += "\n**Results:**\n"
@@ -1749,20 +1870,18 @@ class DiceTableView(discord.ui.View):
         if self.bot_added:
             pot += self.bet
 
-        level_ups = []
-
         if bot_wins and not human_winners:
             for player_id in self.players:
                 shield_attempted, shield_protected = try_lucky_shield_protection(player_id)
 
                 if shield_protected:
                     record_game_stat(player_id, "loss")
-                    xp_info = self.award_xp(player_id, 10, level_ups)
+                    xp_info = self.award_xp(player_id, 10)
                     result = "Lost the round, but lost **0 gold**"
                     result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
                 else:
                     record_game_result(player_id, "loss", -self.bet)
-                    xp_info = self.award_xp(player_id, 10, level_ups)
+                    xp_info = self.award_xp(player_id, 10)
                     update_biggest_loss(player_id, self.bet)
                     result = f"Lost **{self.bet:,} gold**"
                     result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
@@ -1781,7 +1900,7 @@ class DiceTableView(discord.ui.View):
             for player_id in self.players:
                 if player_id == winner:
                     record_game_result(player_id, "win", winnings)
-                    xp_info = self.award_xp(player_id, 25, level_ups)
+                    xp_info = self.award_xp(player_id, 25)
                     update_biggest_win(player_id, winnings)
 
                     result = (
@@ -1795,12 +1914,12 @@ class DiceTableView(discord.ui.View):
 
                     if shield_protected:
                         record_game_stat(player_id, "loss")
-                        xp_info = self.award_xp(player_id, 10, level_ups)
+                        xp_info = self.award_xp(player_id, 10)
                         result = "Lost the round, but lost **0 gold**"
                         result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
                     else:
                         record_game_result(player_id, "loss", -self.bet)
-                        xp_info = self.award_xp(player_id, 10, level_ups)
+                        xp_info = self.award_xp(player_id, 10)
                         update_biggest_loss(player_id, self.bet)
                         result = f"Lost **{self.bet:,} gold**"
                         result += lucky_shield_attempt_text(shield_attempted, shield_protected, self.bet)
@@ -1813,7 +1932,7 @@ class DiceTableView(discord.ui.View):
         else:
             for player_id in self.players:
                 record_game_result(player_id, "push", 0)
-                xp_info = self.award_xp(player_id, 5, level_ups)
+                xp_info = self.award_xp(player_id, 5)
 
                 result = "Push"
                 result += xp_result_text(xp_info)
@@ -1823,17 +1942,52 @@ class DiceTableView(discord.ui.View):
 
             description += f"\nTie! The **{pot:,} gold** pot is pushed."
 
-        embed = discord.Embed(
-            title="🎲 Dice Game",
+        return discord.Embed(
+            title="🎲 Dice Results",
             description=description,
             color=discord.Color.dark_gold()
         )
 
-        await interaction.response.edit_message(
-            embed=embed,
-            view=PlayAgainView("Dice")
-        )
-        await send_level_up_messages(interaction, level_ups)
+    @discord.ui.button(label="Roll", emoji="🎲", style=discord.ButtonStyle.red)
+    async def roll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        actor = self.current_actor()
+
+        if actor is None:
+            await interaction.response.send_message(
+                "This dice game is already finished.",
+                ephemeral=True
+            )
+            return
+
+        if actor == "bot":
+            self.process_bot_turns()
+        elif interaction.user.id != actor:
+            await interaction.response.send_message(
+                "It is not your dice turn.",
+                ephemeral=True
+            )
+            return
+        else:
+            rolled = self.roll_for_actor(actor)
+            last_roll_text = f"🎲 <@{actor}> rolled **{rolled}**."
+            bot_rolls = self.process_bot_turns()
+
+            if bot_rolls:
+                last_roll_text += "\n🤖 Tavern Bot rolled " + ", ".join(f"**{roll}**" for roll in bot_rolls) + "."
+
+            if self.is_complete():
+                await interaction.response.edit_message(
+                    embed=self.build_results_embed(),
+                    view=PlayAgainView("Dice")
+                )
+                await send_level_up_messages(interaction, self.level_ups)
+                return
+
+            await interaction.response.edit_message(
+                embed=self.build_embed(last_roll_text),
+                view=self
+            )
+
 
 class PlayAgainView(discord.ui.View):
     def __init__(self, game_type):
@@ -3992,6 +4146,8 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         quantity_removed = consume_inventory_item(
             interaction.user.id,
             self.item_id,
@@ -3999,7 +4155,7 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
         )
 
         if not quantity_removed:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "You do not have that consumable anymore.",
                 ephemeral=True
             )
@@ -4011,12 +4167,29 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
             record_mischief_hit(interaction.user.id, target.id, self.item_id)
             embed = build_mischief_result_embed(interaction.user, target, self.item_id)
 
-        await interaction.response.send_message(
+        try:
+            if interaction.channel:
+                await interaction.channel.send(embed=embed)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=False)
+        except Exception as error:
+            add_inventory_quantity(
+                interaction.user.id,
+                self.item_id,
+                "mischief",
+                1,
+                datetime.now(timezone.utc).isoformat()
+            )
+            await interaction.followup.send(
+                f"🎭 The item was refunded because the public mischief post failed: `{error}`",
+                ephemeral=True
+            )
+            return
+
+        await interaction.followup.send(
             "🎭 Mischief deployed.",
             ephemeral=True
         )
-
-        await interaction.channel.send(embed=embed)
 
 
 class UseConsumableTargetView(discord.ui.View):
