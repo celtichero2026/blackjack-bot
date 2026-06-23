@@ -95,15 +95,13 @@ MISCHIEF_ITEMS = {
 }
 
 SOUND_ITEMS = {
-    "tavern_bell": {
-        "name": "🔔 Tavern Bell",
+    "cat_girl": {
+        "name": "🐈‍⬛ Cat Girl",
         "price": 2500,
-        "description": "Ring the bell and make the whole Tavern look over.",
-        "file": "tavern_bell.mp3",
-        "message": "rang the Tavern bell.",
+        "file": "cat_girl.mp3",
+        "description": "Mukk Mating Call.",
     },
 }
-
 
 STICKER_RARITIES = {
     "common": {
