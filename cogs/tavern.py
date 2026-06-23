@@ -39,6 +39,8 @@ from database import (
     get_player_sticker_quantity,
     set_featured_sticker,
     get_featured_sticker,
+    get_sticker_pack_setting,
+    set_sticker_pack_setting,
 )
 from games.blackjack_engine import Deck, hand_value
 from achievement_service import check_achievements
@@ -98,10 +100,12 @@ SOUND_ITEMS = {
     "cat_girl": {
         "name": "🐈‍⬛ Cat Girl",
         "price": 2500,
+        "description": "A grown man making deeply questionable cat noises.",
         "file": "cat_girl.mp3",
-        "description": "Mukk Mating Call.",
+        "message": "played the Cat Girl sound.",
     },
 }
+
 
 STICKER_RARITIES = {
     "common": {
@@ -381,6 +385,8 @@ STICKER_PACKS = {
         "price": 1000,
         "pulls": 3,
         "collections": ["welcome"],
+        "purchase_enabled": True,
+        "tavern_mix_enabled": True,
         "weights": {
             "common": 62,
             "uncommon": 24,
@@ -394,6 +400,8 @@ STICKER_PACKS = {
         "price": 1250,
         "pulls": 3,
         "collections": ["mischief"],
+        "purchase_enabled": False,
+        "tavern_mix_enabled": False,
         "weights": {
             "common": 58,
             "uncommon": 25,
@@ -407,6 +415,8 @@ STICKER_PACKS = {
         "price": 1500,
         "pulls": 3,
         "collections": ["casino"],
+        "purchase_enabled": False,
+        "tavern_mix_enabled": False,
         "weights": {
             "common": 56,
             "uncommon": 25,
@@ -420,6 +430,9 @@ STICKER_PACKS = {
         "price": 3000,
         "pulls": 5,
         "collections": ["welcome", "mischief", "casino"],
+        "purchase_enabled": True,
+        "tavern_mix_enabled": False,
+        "uses_tavern_mix_pool": True,
         "weights": {
             "common": 48,
             "uncommon": 27,
@@ -580,8 +593,129 @@ def get_featured_sticker_for_user(user_id):
     return ""
 
 
+def get_sticker_pack_flags(pack_id):
+    pack = STICKER_PACKS.get(pack_id)
+
+    if not pack:
+        return False, False
+
+    purchase_enabled = bool(pack.get("purchase_enabled", True))
+    tavern_mix_enabled = bool(pack.get("tavern_mix_enabled", True))
+
+    setting = get_sticker_pack_setting(pack_id)
+
+    if setting:
+        purchase_enabled = bool(setting[0])
+        tavern_mix_enabled = bool(setting[1])
+
+    return purchase_enabled, tavern_mix_enabled
+
+
+def is_sticker_pack_purchase_enabled(pack_id):
+    purchase_enabled, tavern_mix_enabled = get_sticker_pack_flags(pack_id)
+    return purchase_enabled
+
+
+def is_sticker_pack_tavern_mix_enabled(pack_id):
+    purchase_enabled, tavern_mix_enabled = get_sticker_pack_flags(pack_id)
+    return tavern_mix_enabled
+
+
+def get_tavern_mix_enabled_collections():
+    enabled_collections = set()
+
+    for pack_id, pack in STICKER_PACKS.items():
+        if pack.get("uses_tavern_mix_pool", False):
+            continue
+
+        if not is_sticker_pack_tavern_mix_enabled(pack_id):
+            continue
+
+        enabled_collections.update(pack.get("collections", []))
+
+    return enabled_collections
+
+
+def get_allowed_collections_for_pack(pack_id):
+    pack = STICKER_PACKS.get(pack_id)
+
+    if not pack:
+        return []
+
+    collections = list(pack.get("collections", []))
+
+    if pack.get("uses_tavern_mix_pool", False):
+        mix_enabled_collections = get_tavern_mix_enabled_collections()
+        collections = [
+            collection_id
+            for collection_id in collections
+            if collection_id in mix_enabled_collections
+        ]
+
+    return collections
+
+
+def can_roll_sticker_pack(pack_id):
+    return len(get_allowed_collections_for_pack(pack_id)) > 0
+
+
+def get_available_sticker_pack_ids():
+    return [
+        pack_id
+        for pack_id in STICKER_PACKS
+        if (
+            is_sticker_pack_purchase_enabled(pack_id)
+            and can_roll_sticker_pack(pack_id)
+        )
+    ]
+
+
+def format_enabled_status(is_enabled):
+    if is_enabled:
+        return "✅ Enabled"
+
+    return "🚫 Disabled"
+
+
+def build_pack_control_embed():
+    lines = []
+    mix_collections = get_tavern_mix_enabled_collections()
+
+    for pack_id, pack in STICKER_PACKS.items():
+        purchase_enabled, tavern_mix_enabled = get_sticker_pack_flags(pack_id)
+
+        if pack.get("uses_tavern_mix_pool", False):
+            mix_text = "Uses enabled mix collections"
+            if mix_collections:
+                mix_text += f": {', '.join(sorted(mix_collections))}"
+            else:
+                mix_text += ": none"
+        else:
+            mix_text = format_enabled_status(tavern_mix_enabled)
+
+        lines.append(
+            f"**{pack['name']}** `/{pack_id}`\n"
+            f"Purchase: {format_enabled_status(purchase_enabled)}\n"
+            f"Tavern Mix: {mix_text}"
+        )
+
+    embed = discord.Embed(
+        title="📦 Sticker Pack Control",
+        description="\n\n".join(lines),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="Founder only. Collections remain viewable for players who own stickers.")
+    return embed
+
+
 def roll_sticker_from_pack(pack_id):
     pack = STICKER_PACKS[pack_id]
+    allowed_collections = get_allowed_collections_for_pack(pack_id)
+
+    if not allowed_collections:
+        return None
+
     rarity_names = list(pack["weights"].keys())
     rarity_weights = list(pack["weights"].values())
 
@@ -595,7 +729,7 @@ def roll_sticker_from_pack(pack_id):
         sticker_id
         for sticker_id, sticker in STICKERS.items()
         if (
-            sticker["collection"] in pack["collections"]
+            sticker["collection"] in allowed_collections
             and sticker["rarity"] == selected_rarity
         )
     ]
@@ -604,7 +738,7 @@ def roll_sticker_from_pack(pack_id):
         possible_stickers = [
             sticker_id
             for sticker_id, sticker in STICKERS.items()
-            if sticker["collection"] in pack["collections"]
+            if sticker["collection"] in allowed_collections
         ]
 
     return random.choice(possible_stickers)
@@ -2734,12 +2868,31 @@ def build_sticker_pack_shop_embed(user_id):
     balance = get_balance(user_id)
     owned_total, total_stickers = get_total_sticker_progress(user_id)
 
-    pack_lines = []
+    available_pack_lines = []
+    unavailable_pack_lines = []
 
     for pack_id, pack in STICKER_PACKS.items():
-        pack_lines.append(
-            f"{pack['name']} — **{pack['price']:,} gold** "
-            f"({pack['pulls']} stickers)"
+        purchase_enabled = is_sticker_pack_purchase_enabled(pack_id)
+        rollable = can_roll_sticker_pack(pack_id)
+
+        if purchase_enabled and rollable:
+            available_pack_lines.append(
+                f"{pack['name']} — **{pack['price']:,} gold** "
+                f"({pack['pulls']} stickers)"
+            )
+        else:
+            unavailable_pack_lines.append(f"{pack['name']} — not currently for sale")
+
+    if available_pack_lines:
+        available_text = chr(10).join(available_pack_lines)
+    else:
+        available_text = "No sticker packs are currently for sale."
+
+    unavailable_text = ""
+    if unavailable_pack_lines:
+        unavailable_text = (
+            f"\n\n**Not Currently Available:**\n"
+            f"{chr(10).join(unavailable_pack_lines)}"
         )
 
     embed = discord.Embed(
@@ -2748,13 +2901,14 @@ def build_sticker_pack_shop_embed(user_id):
             f"💰 Gold: **{balance:,}**\n"
             f"📖 Sticker Completion: {progress_line(owned_total, total_stickers)}\n\n"
             f"**Available Packs:**\n"
-            f"{chr(10).join(pack_lines)}\n\n"
+            f"{available_text}"
+            f"{unavailable_text}\n\n"
             "Buy a pack to immediately open it. Duplicates stack for future trading."
         ),
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="Sticker trading can be added later using duplicate counts.")
+    embed.set_footer(text="Collections stay viewable for players who already own those stickers.")
     return embed
 
 
@@ -2836,7 +2990,8 @@ class BuyStickerPackSelect(discord.ui.Select):
 
         options = []
 
-        for pack_id, pack in STICKER_PACKS.items():
+        for pack_id in get_available_sticker_pack_ids():
+            pack = STICKER_PACKS[pack_id]
             options.append(
                 discord.SelectOption(
                     label=pack["name"],
@@ -2845,11 +3000,24 @@ class BuyStickerPackSelect(discord.ui.Select):
                 )
             )
 
+        disabled = False
+
+        if not options:
+            disabled = True
+            options.append(
+                discord.SelectOption(
+                    label="No packs available",
+                    description="Check back later.",
+                    value="none"
+                )
+            )
+
         super().__init__(
             placeholder="Choose a sticker pack to buy...",
             min_values=1,
             max_values=1,
-            options=options
+            options=options,
+            disabled=disabled
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -2859,6 +3027,20 @@ class BuyStickerPackSelect(discord.ui.Select):
         if not pack:
             await interaction.response.send_message(
                 "That sticker pack does not exist.",
+                ephemeral=True
+            )
+            return
+
+        if not is_sticker_pack_purchase_enabled(pack_id):
+            await interaction.response.send_message(
+                f"{pack['name']} is not currently for sale.",
+                ephemeral=True
+            )
+            return
+
+        if not can_roll_sticker_pack(pack_id):
+            await interaction.response.send_message(
+                f"{pack['name']} does not have any enabled stickers to pull right now.",
                 ephemeral=True
             )
             return
@@ -2881,6 +3063,14 @@ class BuyStickerPackSelect(discord.ui.Select):
 
         for index in range(pack["pulls"]):
             sticker_id = roll_sticker_from_pack(pack_id)
+
+            if not sticker_id:
+                await interaction.response.send_message(
+                    f"{pack['name']} does not have any enabled stickers to pull right now.",
+                    ephemeral=True
+                )
+                return
+
             old_quantity = get_player_sticker_quantity(interaction.user.id, sticker_id)
 
             add_player_sticker(
@@ -3823,6 +4013,63 @@ class Tavern(commands.Cog):
         await interaction.response.send_message(
             f"💸 Removed **{amount:,} gold** from {user.mention}.\n"
             f"New balance: **{new_balance:,} gold**."
+        )
+
+    @app_commands.command(name="packcontrol", description="Founder only - enable or disable sticker pack availability")
+    @app_commands.describe(
+        pack="Sticker pack to update",
+        purchase_enabled="Can users buy this pack from the shop?",
+        tavern_mix_enabled="Can this pack's collection appear in Tavern Mix?"
+    )
+    @app_commands.choices(pack=[
+        app_commands.Choice(name="Welcome Pack", value="welcome_pack"),
+        app_commands.Choice(name="Mischief Pack", value="mischief_pack"),
+        app_commands.Choice(name="Casino Pack", value="casino_pack"),
+        app_commands.Choice(name="Tavern Mix Pack", value="tavern_mix_pack"),
+    ])
+    async def packcontrol(
+        self,
+        interaction: discord.Interaction,
+        pack: app_commands.Choice[str],
+        purchase_enabled: bool,
+        tavern_mix_enabled: bool
+    ):
+        if interaction.user.id != FOUNDER_ID:
+            await interaction.response.send_message("🚫 Founder only.", ephemeral=True)
+            return
+
+        pack_id = pack.value
+
+        if pack_id not in STICKER_PACKS:
+            await interaction.response.send_message(
+                "That sticker pack does not exist.",
+                ephemeral=True
+            )
+            return
+
+        updated_at = datetime.now(timezone.utc).isoformat()
+
+        set_sticker_pack_setting(
+            pack_id,
+            purchase_enabled,
+            tavern_mix_enabled,
+            updated_at
+        )
+
+        await interaction.response.send_message(
+            embed=build_pack_control_embed(),
+            ephemeral=True
+        )
+
+    @app_commands.command(name="packstatus", description="Founder only - view sticker pack availability")
+    async def packstatus(self, interaction: discord.Interaction):
+        if interaction.user.id != FOUNDER_ID:
+            await interaction.response.send_message("🚫 Founder only.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            embed=build_pack_control_embed(),
+            ephemeral=True
         )
 
     @app_commands.command(name="profile", description="View a Tavern profile")
