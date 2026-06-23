@@ -177,6 +177,22 @@ def setup_database():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS player_math_stats (
+            user_id TEXT PRIMARY KEY,
+            games_played INTEGER DEFAULT 0,
+            daily_games_played INTEGER DEFAULT 0,
+            correct_answers INTEGER DEFAULT 0,
+            wrong_answers INTEGER DEFAULT 0,
+            perfect_rounds INTEGER DEFAULT 0,
+            medium_perfect_rounds INTEGER DEFAULT 0,
+            hard_perfect_rounds INTEGER DEFAULT 0,
+            best_streak INTEGER DEFAULT 0,
+            fastest_answer_ms INTEGER DEFAULT 0,
+            last_daily_challenge TEXT DEFAULT ''
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -1184,6 +1200,126 @@ def set_tavern_setting(setting_key: str, setting_value: str, updated_at: str):
             updated_at = excluded.updated_at
         """,
         (setting_key, setting_value, updated_at)
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_math_stats(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_math_stats (user_id)
+        VALUES (?)
+        """,
+        (str(user_id),)
+    )
+
+    cur.execute(
+        """
+        SELECT
+            games_played,
+            daily_games_played,
+            correct_answers,
+            wrong_answers,
+            perfect_rounds,
+            medium_perfect_rounds,
+            hard_perfect_rounds,
+            best_streak,
+            fastest_answer_ms,
+            last_daily_challenge
+        FROM player_math_stats
+        WHERE user_id = ?
+        """,
+        (str(user_id),)
+    )
+
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    return row
+
+
+def get_last_daily_math_challenge(user_id: int):
+    stats = get_math_stats(user_id)
+
+    if not stats:
+        return ""
+
+    return stats[9] or ""
+
+
+def record_math_drill_result(
+    user_id: int,
+    difficulty: str,
+    correct: int,
+    wrong: int,
+    perfect: bool,
+    best_streak: int,
+    fastest_answer_ms: int,
+    is_daily: bool,
+    challenge_date: str = ""
+):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_math_stats (user_id)
+        VALUES (?)
+        """,
+        (str(user_id),)
+    )
+
+    medium_perfect = 1 if perfect and difficulty == "medium" else 0
+    hard_perfect = 1 if perfect and difficulty == "hard" else 0
+    perfect_count = 1 if perfect else 0
+    daily_count = 1 if is_daily else 0
+    daily_date_value = challenge_date if is_daily else None
+    fastest_value = int(fastest_answer_ms or 0)
+
+    cur.execute(
+        """
+        UPDATE player_math_stats
+        SET
+            games_played = games_played + 1,
+            daily_games_played = daily_games_played + ?,
+            correct_answers = correct_answers + ?,
+            wrong_answers = wrong_answers + ?,
+            perfect_rounds = perfect_rounds + ?,
+            medium_perfect_rounds = medium_perfect_rounds + ?,
+            hard_perfect_rounds = hard_perfect_rounds + ?,
+            best_streak = MAX(best_streak, ?),
+            fastest_answer_ms = CASE
+                WHEN ? > 0 AND (fastest_answer_ms = 0 OR ? < fastest_answer_ms) THEN ?
+                ELSE fastest_answer_ms
+            END,
+            last_daily_challenge = CASE
+                WHEN ? IS NOT NULL AND ? != '' THEN ?
+                ELSE last_daily_challenge
+            END
+        WHERE user_id = ?
+        """,
+        (
+            daily_count,
+            correct,
+            wrong,
+            perfect_count,
+            medium_perfect,
+            hard_perfect,
+            best_streak,
+            fastest_value,
+            fastest_value,
+            fastest_value,
+            daily_date_value,
+            daily_date_value,
+            daily_date_value,
+            str(user_id),
+        )
     )
 
     conn.commit()
