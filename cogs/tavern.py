@@ -1,6 +1,7 @@
 import discord
 import random
 import os
+import time
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timezone
@@ -102,9 +103,22 @@ SOUND_ITEMS = {
         "price": 2500,
         "description": "A grown man making deeply questionable cat noises.",
         "file": "cat_girl.mp3",
-        "message": "played the Cat Girl sound.",
+        "message": "has unleashed Cat Girl upon the Tavern.",
+        "attack_title": "🐈‍⬛ CAT GIRL ATTACK",
+        "attack_lines": [
+            "A grown man has entered his meow era.",
+            "The Tavern has suffered emotional damage.",
+            "Someone take the microphone away from him.",
+            "This is why we cannot have nice things.",
+            "The cat noises were not requested, but here we are.",
+            "Management refuses to explain this sound.",
+            "The vibes are cursed and unfortunately audible.",
+        ],
     },
 }
+
+SOUND_ATTACK_COOLDOWN_SECONDS = 45
+SOUND_ATTACK_COOLDOWNS = {}
 
 
 STICKER_RARITIES = {
@@ -790,7 +804,42 @@ def get_sound_file_path(sound_id):
     return os.path.join(SOUND_ASSET_FOLDER, file_name)
 
 
-def build_sound_play_embed(user, sound_id, file_ready=True):
+def get_sound_attack_cooldown_remaining(user_id, sound_id):
+    key = (user_id, sound_id)
+    cooldown_until = SOUND_ATTACK_COOLDOWNS.get(key, 0)
+    remaining = int(cooldown_until - time.time())
+    return max(0, remaining)
+
+
+def mark_sound_attack_used(user_id, sound_id):
+    key = (user_id, sound_id)
+    SOUND_ATTACK_COOLDOWNS[key] = time.time() + SOUND_ATTACK_COOLDOWN_SECONDS
+
+
+def build_sound_target_embed(user_id, sound_id):
+    sound = SOUND_ITEMS.get(sound_id)
+
+    if not sound:
+        return discord.Embed(
+            title="🔊 Sound Attack",
+            description="That sound does not exist.",
+            color=discord.Color.gold()
+        )
+
+    embed = discord.Embed(
+        title="🎯 Pick a Sound Target",
+        description=(
+            f"Using: **{sound['name']}**\n\n"
+            "Choose who gets publicly subjected to this questionable audio."
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text="No @everyone. No @here. Just one poor victim.")
+    return embed
+
+
+def build_sound_play_embed(user, sound_id, target=None, file_ready=True):
     sound = SOUND_ITEMS.get(sound_id)
 
     if not sound:
@@ -800,10 +849,19 @@ def build_sound_play_embed(user, sound_id, file_ready=True):
             color=discord.Color.gold()
         )
 
-    description = (
-        f"**{user.display_name}** {sound.get('message', 'played a sound.')}\n\n"
-        f"{sound.get('description', '')}"
-    )
+    attack_line = random.choice(sound.get("attack_lines", [sound.get("description", "")]))
+
+    if target:
+        description = (
+            f"**{user.display_name}** has subjected **{target.display_name}** "
+            f"to **{sound['name']}**.\n\n"
+            f"{attack_line}"
+        )
+    else:
+        description = (
+            f"**{user.display_name}** {sound.get('message', 'played a sound.')}\n\n"
+            f"{attack_line}"
+        )
 
     if file_ready:
         description += "\n\n▶️ Press play on the attached audio below."
@@ -814,15 +872,19 @@ def build_sound_play_embed(user, sound_id, file_ready=True):
         )
 
     embed = discord.Embed(
-        title=f"🔊 {sound['name']}",
+        title=sound.get("attack_title", f"🔊 {sound['name']}"),
         description=description,
-        color=discord.Color.gold()
+        color=discord.Color.dark_gold()
     )
 
+    if target:
+        embed.set_thumbnail(url=target.display_avatar.url)
+
+    embed.set_footer(text="The Tavern is not responsible for emotional damage.")
     return embed
 
 
-async def play_soundboard_sound(interaction, sound_id):
+async def play_soundboard_sound(interaction, sound_id, target_user=None):
     sound = SOUND_ITEMS.get(sound_id)
 
     if not sound:
@@ -839,119 +901,57 @@ async def play_soundboard_sound(interaction, sound_id):
         )
         return
 
+    if target_user and target_user.bot:
+        await interaction.response.send_message(
+            "The Tavern Bot refuses to be sound-attacked by its own customers.",
+            ephemeral=True
+        )
+        return
+
+    remaining = get_sound_attack_cooldown_remaining(interaction.user.id, sound_id)
+
+    if remaining > 0:
+        await interaction.response.send_message(
+            f"🔊 That sound is on cooldown for **{remaining} more seconds**.",
+            ephemeral=True
+        )
+        return
+
     file_path = get_sound_file_path(sound_id)
     file_name = sound.get("file", "sound.mp3").strip() or "sound.mp3"
     file_exists = bool(file_path and os.path.exists(file_path))
-    embed = build_sound_play_embed(interaction.user, sound_id, file_ready=file_exists)
+    embed = build_sound_play_embed(
+        interaction.user,
+        sound_id,
+        target=target_user,
+        file_ready=file_exists
+    )
+
+    mark_sound_attack_used(interaction.user.id, sound_id)
 
     await interaction.response.send_message(
-        "🔊 Sound posted.",
+        "🔊 Sound attack posted.",
         ephemeral=True
     )
 
+    content = None
+    if target_user:
+        content = f"{target_user.mention} 🐈‍⬛ you have been chosen by The Tavern."
+
+    send_kwargs = {
+        "content": content,
+        "embed": embed,
+        "allowed_mentions": discord.AllowedMentions(
+            users=True,
+            roles=False,
+            everyone=False
+        )
+    }
+
     if file_exists:
-        await interaction.channel.send(
-            embed=embed,
-            file=discord.File(file_path, filename=file_name)
-        )
-    else:
-        await interaction.channel.send(embed=embed)
+        send_kwargs["file"] = discord.File(file_path, filename=file_name)
 
-
-def get_mischief_bonus_line(item_id):
-    if random.random() > 0.05:
-        return ""
-
-    if item_id == "rotten_tomato":
-        return "\n\n💦 Oof, that one was extra juicy."
-
-    if item_id == "cream_pie":
-        return random.choice([
-            "\n\n😳 The Tavern will not be commenting on where the whipped cream ended up.",
-            "\n\n🫣 That pie hit dangerously close to HR territory.",
-            "\n\n🥴 Someone get a towel. Actually... get two.",
-            "\n\n😏 That was a very questionable use of dairy.",
-            "\n\n🍰 The pie was consensual. The cleanup was not.",
-        ])
-
-    return ""
-
-
-def build_mischief_result_embed(attacker, target, item_id):
-    if item_id == "rotten_tomato":
-        description = (
-            f"**{attacker.display_name}** launched a rotten tomato at "
-            f"**{target.display_name}**."
-        )
-        description += get_mischief_bonus_line(item_id)
-
-        embed = discord.Embed(
-            title="🍅 Rotten Tomato!",
-            description=description,
-            color=discord.Color.red()
-        )
-        embed.set_thumbnail(url=target.display_avatar.url)
-        return embed
-
-    if item_id == "cream_pie":
-        description = (
-            f"**{attacker.display_name}** hit **{target.display_name}** "
-            "with a cream pie."
-        )
-        description += get_mischief_bonus_line(item_id)
-
-        embed = discord.Embed(
-            title="🥧 Cream Pie!",
-            description=description,
-            color=discord.Color.gold()
-        )
-        embed.set_thumbnail(url=target.display_avatar.url)
-        return embed
-
-    embed = discord.Embed(
-        title="🎭 Mischief!",
-        description="Something questionable happened.",
-        color=discord.Color.gold()
-    )
-    return embed
-
-
-def build_mystery_box_embed(attacker, target):
-    outcome = random.choices(
-        ["rotten_tomato", "cream_pie", "backfire", "confetti"],
-        weights=[35, 35, 15, 15],
-        k=1
-    )[0]
-
-    if outcome in ["rotten_tomato", "cream_pie"]:
-        record_mischief_hit(attacker.id, target.id, outcome)
-        return build_mischief_result_embed(attacker, target, outcome)
-
-    if outcome == "backfire":
-        embed = discord.Embed(
-            title="💥 Mystery Box Backfire!",
-            description=(
-                f"**{attacker.display_name}** opened the Mystery Box...\n\n"
-                "It immediately exploded in their face."
-            ),
-            color=discord.Color.dark_red()
-        )
-        embed.set_thumbnail(url=attacker.display_avatar.url)
-        return embed
-
-    embed = discord.Embed(
-        title="✨ Confetti Dud!",
-        description=(
-            f"**{attacker.display_name}** opened the Mystery Box...\n\n"
-            "A sad little puff of confetti fell out. That was it."
-        ),
-        color=discord.Color.light_grey()
-    )
-
-    if CONFETTI_DUD_GIF:
-        embed.set_image(url=CONFETTI_DUD_GIF)
-
-    return embed
+    await interaction.channel.send(**send_kwargs)
 
 
 async def send_usable_inventory_menu(interaction, allowed_target_ids=None):
@@ -2563,12 +2563,12 @@ def build_sound_shop_embed(user_id):
             f"💰 Gold: **{balance:,}**\n\n"
             f"**Available Sounds:**\n"
             f"{chr(10).join(lines)}\n\n"
-            "Sounds are permanent unlocks. Buy once, use whenever."
+            "Sounds are permanent unlocks. Buy once, use as targeted sound attacks."
         ),
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="Upload sound files to assets/sounds/. Sounds post as playable Discord audio attachments.")
+    embed.set_footer(text="Sounds post publicly, ping one target, and attach playable audio.")
     return embed
 
 
@@ -2615,7 +2615,7 @@ def build_use_sounds_embed(user_id):
         description=(
             f"**Your Sounds:**\n"
             f"{owned_text}\n\n"
-            "Choose a sound to play it in the channel."
+            "Choose a sound, then pick a target."
         ),
         color=discord.Color.gold()
     )
@@ -2663,7 +2663,7 @@ class SoundShopView(discord.ui.View):
             view=BuySoundSelectView(self.owner_id)
         )
 
-    @discord.ui.button(label="Use Sound", emoji="🔊", style=discord.ButtonStyle.blurple)
+    @discord.ui.button(label="Use Sound Attack", emoji="🔊", style=discord.ButtonStyle.blurple)
     async def use_sound_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         owned_sounds = get_owned_sound_items(self.owner_id)
 
@@ -2805,13 +2805,13 @@ class UseSoundSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=sound["name"],
-                    description="Play this sound in the channel",
+                    description="Target someone with this sound",
                     value=sound_id
                 )
             )
 
         super().__init__(
-            placeholder="Choose a sound to play...",
+            placeholder="Choose a sound attack...",
             min_values=1,
             max_values=1,
             options=options
@@ -2819,7 +2819,16 @@ class UseSoundSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         sound_id = self.values[0]
-        await play_soundboard_sound(interaction, sound_id)
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_sound_target_embed(interaction.user.id, sound_id),
+            view=UseSoundTargetView(
+                owner_id=interaction.user.id,
+                sound_id=sound_id,
+                back_to="sounds"
+            )
+        )
 
 
 class UseSoundSelectView(discord.ui.View):
@@ -2844,6 +2853,89 @@ class UseSoundSelectView(discord.ui.View):
             content=None,
             embed=build_sound_shop_embed(self.owner_id),
             view=SoundShopView(self.owner_id)
+        )
+
+
+class UseSoundTargetSelect(discord.ui.UserSelect):
+    def __init__(self, owner_id, sound_id, allowed_target_ids=None):
+        self.owner_id = owner_id
+        self.sound_id = sound_id
+        self.allowed_target_ids = allowed_target_ids
+
+        super().__init__(
+            placeholder="Choose a sound target...",
+            min_values=1,
+            max_values=1
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        target = self.values[0]
+
+        if self.allowed_target_ids is not None and target.id not in self.allowed_target_ids:
+            await interaction.response.send_message(
+                "That player is not sitting at this table.",
+                ephemeral=True
+            )
+            return
+
+        if target.bot:
+            await interaction.response.send_message(
+                "The Tavern Bot refuses to be sound-attacked by its own customers.",
+                ephemeral=True
+            )
+            return
+
+        await play_soundboard_sound(interaction, self.sound_id, target_user=target)
+
+
+class UseSoundTargetView(discord.ui.View):
+    def __init__(self, owner_id, sound_id, allowed_target_ids=None, back_to="sounds"):
+        super().__init__(timeout=180)
+        self.owner_id = owner_id
+        self.sound_id = sound_id
+        self.allowed_target_ids = allowed_target_ids
+        self.back_to = back_to
+
+        self.add_item(
+            UseSoundTargetSelect(
+                owner_id,
+                sound_id,
+                allowed_target_ids
+            )
+        )
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "This sound target menu belongs to someone else.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.back_to == "items":
+            await interaction.response.edit_message(
+                content=None,
+                embed=discord.Embed(
+                    title="🎭 Use Item / Sound",
+                    description="Choose something from your Tavern inventory.",
+                    color=discord.Color.gold()
+                ),
+                view=UseConsumableSelectView(
+                    owner_id=self.owner_id,
+                    allowed_target_ids=self.allowed_target_ids,
+                    include_sounds=True
+                )
+            )
+            return
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=build_use_sounds_embed(self.owner_id),
+            view=UseSoundSelectView(self.owner_id)
         )
 
 
@@ -3445,7 +3537,16 @@ class UseConsumableSelect(discord.ui.Select):
         item_type, item_id = selected.split(":", 1)
 
         if item_type == "sound":
-            await play_soundboard_sound(interaction, item_id)
+            await interaction.response.edit_message(
+                content=None,
+                embed=build_sound_target_embed(interaction.user.id, item_id),
+                view=UseSoundTargetView(
+                    owner_id=interaction.user.id,
+                    sound_id=item_id,
+                    allowed_target_ids=self.allowed_target_ids,
+                    back_to="items"
+                )
+            )
             return
 
         item = MISCHIEF_ITEMS.get(item_id)
