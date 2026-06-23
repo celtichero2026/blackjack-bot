@@ -44,6 +44,8 @@ from database import (
     set_sticker_pack_setting,
     get_tavern_setting,
     set_tavern_setting,
+    get_title_changed_at,
+    set_title_changed_at,
     add_player_effect,
     get_player_effect_quantity,
     consume_player_effect,
@@ -63,24 +65,46 @@ TITLE_ITEMS = {
     "gold_hoarder": {
         "name": "💰 Gold Hoarder",
         "price": 5000,
+        "rarity": "Uncommon",
+        "bonus_description": "Daily Gold +5%",
+        "daily_gold_bonus": 0.05,
     },
     "dice_goblin": {
         "name": "🎲 Dice Goblin",
         "price": 10000,
+        "rarity": "Rare",
+        "bonus_description": "Dice XP +8%",
+        "xp_bonus": 0.08,
+        "xp_sources": ["dice"],
     },
     "card_shark": {
         "name": "🃏 Card Shark",
         "price": 25000,
+        "rarity": "Rare",
+        "bonus_description": "Blackjack XP +8%",
+        "xp_bonus": 0.08,
+        "xp_sources": ["blackjack"],
     },
     "high_roller": {
         "name": "🎖 High Roller",
         "price": 50000,
+        "rarity": "Epic",
+        "bonus_description": "All game XP +10%",
+        "xp_bonus": 0.10,
+        "xp_sources": ["all"],
     },
     "tavern_royalty": {
         "name": "👑 Tavern Royalty",
         "price": 100000,
+        "rarity": "Legendary",
+        "bonus_description": "Shop Discount +5%, All game XP +10%",
+        "shop_discount": 0.05,
+        "xp_bonus": 0.10,
+        "xp_sources": ["all"],
     },
 }
+
+TITLE_SWAP_COOLDOWN_SECONDS = 24 * 60 * 60
 
 
 
@@ -584,9 +608,15 @@ def xp_result_text(xp_info):
         return ""
 
     bar = progress_bar(xp_info["xp_current"], xp_info["xp_needed"])
+    title_bonus = xp_info.get("title_xp_bonus", 0)
+    bonus_line = ""
+
+    if title_bonus > 0:
+        bonus_line = f"\n🎖 Title Bonus: **+{title_bonus} XP**"
 
     return (
         f"\n⭐ **+{xp_info['xp_gained']} XP**"
+        f"{bonus_line}"
         f"\n{bar} **{xp_info['xp_current']}/{xp_info['xp_needed']} XP**"
     )
 
@@ -619,6 +649,176 @@ def get_active_title(user_id):
 def format_table_player(player_id):
     title = get_active_title(player_id)
     return f"- <@{player_id}> — {title}{lucky_shield_badge(player_id)}"
+
+
+def get_title_id_by_name(title_name):
+    if not title_name or title_name == DEFAULT_TITLE:
+        return "default"
+
+    for title_id, title in TITLE_ITEMS.items():
+        if title.get("name") == title_name:
+            return title_id
+
+    return "default"
+
+
+def get_active_title_id(user_id):
+    return get_title_id_by_name(get_active_title(user_id))
+
+
+def get_title_bonus_description(title_id):
+    if title_id == "default":
+        return "No active bonus."
+
+    title = TITLE_ITEMS.get(title_id)
+    if not title:
+        return "No active bonus."
+
+    return title.get("bonus_description", "No active bonus.")
+
+
+def get_active_title_bonus_description(user_id):
+    return get_title_bonus_description(get_active_title_id(user_id))
+
+
+def get_shop_discount_percent(user_id):
+    title_id = get_active_title_id(user_id)
+    title = TITLE_ITEMS.get(title_id, {})
+    return float(title.get("shop_discount", 0) or 0)
+
+
+def get_discounted_shop_price(user_id, base_price):
+    discount = get_shop_discount_percent(user_id)
+
+    if discount <= 0:
+        return base_price
+
+    discounted = int(base_price * (1 - discount))
+    return max(1, discounted)
+
+
+def format_shop_price(user_id, base_price):
+    discounted = get_discounted_shop_price(user_id, base_price)
+
+    if discounted == base_price:
+        return f"{base_price:,} gold"
+
+    percent = int(get_shop_discount_percent(user_id) * 100)
+    return f"{discounted:,} gold ({percent}% off; was {base_price:,})"
+
+
+def shop_discount_line(user_id):
+    discount = get_shop_discount_percent(user_id)
+
+    if discount <= 0:
+        return ""
+
+    return f"\n🎖 Shop Discount: **{int(discount * 100)}% off**"
+
+
+def get_daily_gold_reward(user_id, base_reward):
+    title_id = get_active_title_id(user_id)
+    title = TITLE_ITEMS.get(title_id, {})
+    bonus_percent = float(title.get("daily_gold_bonus", 0) or 0)
+
+    if bonus_percent <= 0:
+        return base_reward, 0, ""
+
+    bonus_amount = max(1, int((base_reward * bonus_percent) + 0.999999))
+    return base_reward + bonus_amount, bonus_amount, title.get("name", "")
+
+
+def get_title_xp_bonus_percent(user_id, source):
+    title_id = get_active_title_id(user_id)
+    title = TITLE_ITEMS.get(title_id, {})
+
+    bonus_percent = float(title.get("xp_bonus", 0) or 0)
+    sources = title.get("xp_sources", [])
+
+    if bonus_percent <= 0:
+        return 0
+
+    if "all" in sources or source in sources:
+        return bonus_percent
+
+    return 0
+
+
+def award_tavern_xp(user_id, amount, source):
+    bonus_percent = get_title_xp_bonus_percent(user_id, source)
+    bonus_amount = 0
+
+    if bonus_percent > 0:
+        bonus_amount = max(1, int((amount * bonus_percent) + 0.999999))
+
+    total_xp = amount + bonus_amount
+    xp_info = add_xp(user_id, total_xp)
+
+    if xp_info:
+        xp_info["base_xp"] = amount
+        xp_info["title_xp_bonus"] = bonus_amount
+        xp_info["title_bonus_name"] = get_active_title(user_id)
+
+    return xp_info
+
+
+def parse_title_changed_at(value):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def get_title_swap_remaining_seconds(user_id):
+    if user_id == FOUNDER_ID:
+        return 0
+
+    changed_at = parse_title_changed_at(get_title_changed_at(user_id))
+
+    if not changed_at:
+        return 0
+
+    now = datetime.now(timezone.utc)
+
+    if changed_at.tzinfo is None:
+        changed_at = changed_at.replace(tzinfo=timezone.utc)
+
+    elapsed = (now - changed_at).total_seconds()
+    remaining = int(TITLE_SWAP_COOLDOWN_SECONDS - elapsed)
+    return max(0, remaining)
+
+
+def format_seconds_compact(seconds):
+    seconds = max(0, int(seconds))
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+
+    if minutes > 0:
+        return f"{minutes}m"
+
+    return "less than 1m"
+
+
+def title_swap_status_text(user_id):
+    remaining = get_title_swap_remaining_seconds(user_id)
+
+    if remaining <= 0:
+        return "✅ Title swap available now."
+
+    return f"⏳ Next title swap available in **{format_seconds_compact(remaining)}**."
+
+
+def mark_title_changed(user_id):
+    set_title_changed_at(
+        user_id,
+        datetime.now(timezone.utc).isoformat()
+    )
 
 
 
@@ -1446,7 +1646,7 @@ class BlackjackGameView(discord.ui.View):
             )
 
     def award_xp(self, player_id, amount):
-        xp_info = add_xp(player_id, amount)
+        xp_info = award_tavern_xp(player_id, amount, "blackjack")
 
         if xp_info and xp_info.get("level_up"):
             self.level_ups.append((player_id, xp_info))
@@ -2052,7 +2252,7 @@ class DiceGameView(discord.ui.View):
             )
 
     def award_xp(self, player_id, amount):
-        xp_info = add_xp(player_id, amount)
+        xp_info = award_tavern_xp(player_id, amount, "dice")
 
         if xp_info and xp_info.get("level_up"):
             self.level_ups.append((player_id, xp_info))
@@ -2376,7 +2576,8 @@ class TavernView(discord.ui.View):
     @discord.ui.button(label="Claim Daily", emoji="🍺", style=discord.ButtonStyle.green)
     async def daily_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        claimed, balance = claim_daily(interaction.user.id, DAILY_REWARD, today)
+        daily_reward, title_bonus, title_name = get_daily_gold_reward(interaction.user.id, DAILY_REWARD)
+        claimed, balance = claim_daily(interaction.user.id, daily_reward, today)
 
         if not claimed:
             await interaction.response.send_message(
@@ -2385,8 +2586,12 @@ class TavernView(discord.ui.View):
             )
             return
 
+        bonus_line = ""
+        if title_bonus > 0:
+            bonus_line = f"\n🎖 {title_name} bonus: **+{title_bonus:,} gold**"
+
         await interaction.response.send_message(
-            f"🍺 You claimed **{DAILY_REWARD:,} gold** from The Tavern.\n💰 New balance: **{balance:,} gold**.",
+            f"🍺 You claimed **{daily_reward:,} gold** from The Tavern.{bonus_line}\n💰 New balance: **{balance:,} gold**.",
             ephemeral=True
         )
 
@@ -3222,20 +3427,18 @@ class ProfileBackView(discord.ui.View):
 
 def build_shop_embed(user_id):
     balance = get_balance(user_id)
-
-    profile = get_profile(user_id)
-
-    active_title = "🍺 Tavern Newbie"
-
-    if profile:
-        active_title = profile[10]
+    active_title = get_active_title(user_id)
+    bonus_description = get_active_title_bonus_description(user_id)
+    discount_text = shop_discount_line(user_id)
 
     embed = discord.Embed(
         title="🏪 The Tavern Shop",
         description=(
             f"💰 Gold: **{balance:,}**\n\n"
             f"🎖 Active Title:\n"
-            f"{active_title}\n\n"
+            f"{active_title}\n"
+            f"Bonus: **{bonus_description}**"
+            f"{discount_text}\n\n"
             "Spend your questionable winnings on things you probably do not need."
         ),
         color=discord.Color.gold()
@@ -3305,7 +3508,7 @@ def build_sound_shop_embed(user_id):
         if sound_id in owned_sounds:
             lines.append(f"✅ {sound['name']} — Owned")
         else:
-            lines.append(f"{sound['name']} — **{sound['price']:,} gold**")
+            lines.append(f"{sound['name']} — **{format_shop_price(user_id, sound['price'])}**")
 
     embed = discord.Embed(
         title="🔊 Sound Shop",
@@ -3330,7 +3533,7 @@ def build_buy_sounds_embed(user_id):
         if player_owns_item(user_id, sound_id):
             continue
 
-        lines.append(f"{sound['name']} — {sound['price']:,} gold")
+        lines.append(f"{sound['name']} — {format_shop_price(user_id, sound['price'])}")
 
     available_text = "\n".join(lines) if lines else "You already own every sound."
 
@@ -3463,7 +3666,7 @@ class BuySoundSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=sound["name"],
-                    description=f"{sound['price']:,} gold",
+                    description=format_shop_price(owner_id, sound["price"]),
                     value=sound_id
                 )
             )
@@ -3493,7 +3696,8 @@ class BuySoundSelect(discord.ui.Select):
             )
             return
 
-        price = sound["price"]
+        base_price = sound["price"]
+        price = get_discounted_shop_price(interaction.user.id, base_price)
         balance = get_balance(interaction.user.id)
 
         if balance < price:
@@ -3733,7 +3937,7 @@ def build_sticker_pack_shop_embed(user_id):
 
         if purchase_enabled and rollable:
             available_pack_lines.append(
-                f"{pack['name']} — **{pack['price']:,} gold** "
+                f"{pack['name']} — **{format_shop_price(user_id, pack['price'])}** "
                 f"({pack['pulls']} stickers)"
             )
         else:
@@ -3851,7 +4055,7 @@ class BuyStickerPackSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=pack["name"],
-                    description=f"{pack['price']:,} gold • {pack['pulls']} stickers",
+                    description=f"{format_shop_price(owner_id, pack['price'])} • {pack['pulls']} stickers",
                     value=pack_id
                 )
             )
@@ -3901,7 +4105,8 @@ class BuyStickerPackSelect(discord.ui.Select):
             )
             return
 
-        price = pack["price"]
+        base_price = pack["price"]
+        price = get_discounted_shop_price(interaction.user.id, base_price)
         balance = get_balance(interaction.user.id)
 
         if balance < price:
@@ -4038,10 +4243,10 @@ def build_mischief_market_embed(user_id):
     shop_lines = []
 
     for item_id, item in MISCHIEF_ITEMS.items():
-        shop_lines.append(f"{item['name']} — {item['price']:,} gold")
+        shop_lines.append(f"{item['name']} — {format_shop_price(user_id, item['price'])}")
 
     for item_id, item in GAMEPLAY_ITEMS.items():
-        shop_lines.append(f"{item['name']} — {item['price']:,} gold")
+        shop_lines.append(f"{item['name']} — {format_shop_price(user_id, item['price'])}")
 
     embed = discord.Embed(
         title="🎭 Consumables Market",
@@ -4065,10 +4270,10 @@ def build_buy_mischief_embed(user_id):
     lines = []
 
     for item_id, item in MISCHIEF_ITEMS.items():
-        lines.append(f"{item['name']} — {item['price']:,} gold")
+        lines.append(f"{item['name']} — {format_shop_price(user_id, item['price'])}")
 
     for item_id, item in GAMEPLAY_ITEMS.items():
-        lines.append(f"{item['name']} — {item['price']:,} gold")
+        lines.append(f"{item['name']} — {format_shop_price(user_id, item['price'])}")
 
     embed = discord.Embed(
         title="💰 Buy Consumables",
@@ -4186,7 +4391,7 @@ class BuyMischiefSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=item["name"],
-                    description=f"Mischief • {item['price']:,} gold",
+                    description=f"Mischief • {format_shop_price(owner_id, item['price'])}",
                     value=f"mischief:{item_id}"
                 )
             )
@@ -4195,7 +4400,7 @@ class BuyMischiefSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=item["name"],
-                    description=f"Gameplay • {item['price']:,} gold",
+                    description=f"Gameplay • {format_shop_price(owner_id, item['price'])}",
                     value=f"gameplay:{item_id}"
                 )
             )
@@ -4233,7 +4438,8 @@ class BuyMischiefSelect(discord.ui.Select):
             )
             return
 
-        price = item["price"]
+        base_price = item["price"]
+        price = get_discounted_shop_price(interaction.user.id, base_price)
         balance = get_balance(interaction.user.id)
 
         if balance < price:
@@ -4657,33 +4863,34 @@ class UseConsumableTargetView(discord.ui.View):
 
 def build_titles_embed(user_id):
     balance = get_balance(user_id)
-    profile = get_profile(user_id)
-
-    active_title = DEFAULT_TITLE
-    if profile:
-        active_title = profile[10]
-
+    active_title = get_active_title(user_id)
+    active_title_id = get_active_title_id(user_id)
+    active_bonus = get_title_bonus_description(active_title_id)
     owned_title_ids = get_player_titles(user_id)
 
-    owned_titles = [DEFAULT_TITLE]
+    owned_titles = [f"{DEFAULT_TITLE} — No bonus"]
 
     for title_id in owned_title_ids:
         title = TITLE_ITEMS.get(title_id)
         if title:
-            owned_titles.append(title["name"])
+            owned_titles.append(
+                f"{title['name']} — {title.get('bonus_description', 'No bonus')}"
+            )
 
     owned_text = "\n".join(owned_titles)
 
     available_lines = []
 
     for title_id, title in TITLE_ITEMS.items():
-        price = title["price"]
+        price_text = format_shop_price(user_id, title["price"])
         name = title["name"]
+        rarity = title.get("rarity", "Title")
+        bonus = title.get("bonus_description", "No bonus")
 
         if title_id in owned_title_ids:
-            available_lines.append(f"✅ {name} — Owned")
+            available_lines.append(f"✅ {name} — Owned — {bonus}")
         else:
-            available_lines.append(f"{name} — {price:,} gold")
+            available_lines.append(f"{name} [{rarity}] — {price_text} — {bonus}")
 
     available_text = "\n".join(available_lines)
 
@@ -4692,7 +4899,9 @@ def build_titles_embed(user_id):
         description=(
             f"💰 Gold: **{balance:,}**\n\n"
             f"**Current Title:**\n"
-            f"{active_title}\n\n"
+            f"{active_title}\n"
+            f"Bonus: **{active_bonus}**\n"
+            f"{title_swap_status_text(user_id)}\n\n"
             f"**Owned Titles:**\n"
             f"{owned_text}\n\n"
             f"**Available Titles:**\n"
@@ -4701,8 +4910,9 @@ def build_titles_embed(user_id):
         color=discord.Color.gold()
     )
 
-    embed.set_footer(text="Buy a title, then equip it from your owned titles.")
+    embed.set_footer(text="Buy a title, then equip it. You can change titles once every 24 hours.")
     return embed
+
 
 
 def build_buy_titles_embed(user_id):
@@ -4714,7 +4924,10 @@ def build_buy_titles_embed(user_id):
         if player_owns_item(user_id, title_id):
             continue
 
-        lines.append(f"{title['name']} — {title['price']:,} gold")
+        lines.append(
+            f"{title['name']} — {format_shop_price(user_id, title['price'])} — "
+            f"{title.get('bonus_description', 'No bonus')}"
+        )
 
     available_text = "\n".join(lines)
 
@@ -4724,7 +4937,8 @@ def build_buy_titles_embed(user_id):
     embed = discord.Embed(
         title="💰 Buy a Title",
         description=(
-            f"💰 Gold: **{balance:,}**\n\n"
+            f"💰 Gold: **{balance:,}**"
+            f"{shop_discount_line(user_id)}\n\n"
             f"{available_text}\n\n"
             "Choose a title from the dropdown below."
         ),
@@ -4734,27 +4948,30 @@ def build_buy_titles_embed(user_id):
     return embed
 
 
-def build_equip_titles_embed(user_id):
-    profile = get_profile(user_id)
 
-    active_title = DEFAULT_TITLE
-    if profile:
-        active_title = profile[10]
+def build_equip_titles_embed(user_id):
+    active_title = get_active_title(user_id)
+    active_title_id = get_active_title_id(user_id)
+    active_bonus = get_title_bonus_description(active_title_id)
 
     owned_title_ids = get_player_titles(user_id)
 
-    owned_titles = [DEFAULT_TITLE]
+    owned_titles = [f"{DEFAULT_TITLE} — No bonus"]
 
     for title_id in owned_title_ids:
         title = TITLE_ITEMS.get(title_id)
         if title:
-            owned_titles.append(title["name"])
+            owned_titles.append(
+                f"{title['name']} — {title.get('bonus_description', 'No bonus')}"
+            )
 
     embed = discord.Embed(
         title="🎖 Equip a Title",
         description=(
             f"**Current Title:**\n"
-            f"{active_title}\n\n"
+            f"{active_title}\n"
+            f"Bonus: **{active_bonus}**\n"
+            f"{title_swap_status_text(user_id)}\n\n"
             f"**Owned Titles:**\n"
             f"{chr(10).join(owned_titles)}\n\n"
             "Choose a title from the dropdown below."
@@ -4763,6 +4980,7 @@ def build_equip_titles_embed(user_id):
     )
 
     return embed
+
 
 
 class BuyTitleSelect(discord.ui.Select):
@@ -4780,7 +4998,7 @@ class BuyTitleSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=title["name"],
-                    description=f"{title['price']:,} gold",
+                    description=format_shop_price(owner_id, title["price"]),
                     value=title_id
                 )
             )
@@ -4810,7 +5028,8 @@ class BuyTitleSelect(discord.ui.Select):
             )
             return
 
-        price = title["price"]
+        base_price = title["price"]
+        price = get_discounted_shop_price(interaction.user.id, base_price)
         balance = get_balance(interaction.user.id)
 
         if balance < price:
@@ -4890,7 +5109,7 @@ class EquipTitleSelect(discord.ui.Select):
             options.append(
                 discord.SelectOption(
                     label=title["name"],
-                    description="Owned title",
+                    description=title.get("bonus_description", "Owned title"),
                     value=title_id
                 )
             )
@@ -4904,9 +5123,9 @@ class EquipTitleSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         selected = self.values[0]
+        current_title = get_active_title(interaction.user.id)
 
         if selected == "default":
-            set_player_title(interaction.user.id, DEFAULT_TITLE)
             equipped_title = DEFAULT_TITLE
         else:
             title = TITLE_ITEMS.get(selected)
@@ -4926,7 +5145,26 @@ class EquipTitleSelect(discord.ui.Select):
                 return
 
             equipped_title = title["name"]
-            set_player_title(interaction.user.id, equipped_title)
+
+        if equipped_title == current_title:
+            await interaction.response.send_message(
+                f"{equipped_title} is already your active title.",
+                ephemeral=True
+            )
+            return
+
+        remaining = get_title_swap_remaining_seconds(interaction.user.id)
+
+        if remaining > 0:
+            await interaction.response.send_message(
+                "⏳ You already changed your title recently.\n"
+                f"You can change it again in **{format_seconds_compact(remaining)}**.",
+                ephemeral=True
+            )
+            return
+
+        set_player_title(interaction.user.id, equipped_title)
+        mark_title_changed(interaction.user.id)
 
         embed = build_titles_embed(interaction.user.id)
         embed.set_footer(text=f"Equipped title: {equipped_title}")
