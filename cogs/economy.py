@@ -4,7 +4,12 @@ from discord import app_commands
 from datetime import datetime, timezone
 
 from config import TAVERN_CHANNEL_ID, DAILY_REWARD
-from database import get_or_create_player, claim_daily, get_leaderboard
+from database import (
+    get_or_create_player,
+    claim_daily,
+    get_leaderboard,
+    get_level_info,
+)
 
 
 def is_tavern_channel(interaction):
@@ -63,8 +68,7 @@ class Economy(commands.Cog):
             ephemeral=True
         )
 
-
-    @app_commands.command(name="leaderboard", description="View the richest Tavern players")
+    @app_commands.command(name="leaderboard", description="View the top Tavern players by XP")
     async def leaderboard(self, interaction: discord.Interaction):
 
         if not is_tavern_channel(interaction):
@@ -86,16 +90,23 @@ class Economy(commands.Cog):
         description = ""
 
         for index, row in enumerate(rows, start=1):
-            user_id, balance, wins, losses, games_played = row
-            description += f"**{index}.** <@{user_id}> — **{balance:,} gold**\n"
+            user_id, xp, balance, games_played = row
+            level, xp_current, xp_needed = get_level_info(xp or 0)
+            description += (
+                f"**{index}.** <@{user_id}> — "
+                f"⭐ **Level {level}** • **{(xp or 0):,} XP** "
+                f"• {games_played or 0:,} games\n"
+            )
 
         embed = discord.Embed(
-            title="🏆 The Tavern Leaderboard",
+            title="🏆 Tavern XP Leaderboard",
             description=description,
             color=discord.Color.gold()
         )
+        embed.set_footer(text="Ranked by total XP, then games played, then gold.")
 
         await interaction.response.send_message(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(Economy(bot))
