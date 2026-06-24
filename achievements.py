@@ -24,4 +24,9 @@ ACHIEVEMENTS = {
     "MATH_MENTAL_MENACE": {"name": "🔥 Mental Math Menace", "description": "Get 5/5 on a Medium Math Drill."},
     "MATH_BIG_BRAIN": {"name": "👑 Big Brain at the Bar", "description": "Get 5/5 on a Hard Math Drill."},
     "MATH_QUICK_MATHS": {"name": "⚡ Quick Maths", "description": "Answer a Math Drill question correctly in under 3 seconds."},
+    "HANGMAN_FIRST_GRAVE": {"name": "🪦 First Grave", "description": "Play your first Hangman game."},
+    "HANGMAN_LETTER_GREMLIN": {"name": "🔤 Letter Gremlin", "description": "Guess 25 letters in Hangman."},
+    "HANGMAN_NOT_TODAY": {"name": "🧠 Not Today, Undertaker", "description": "Win a Hangman game as a guesser."},
+    "HANGMAN_UNDERTAKERS_DUE": {"name": "🕯️ Undertaker's Due", "description": "Win a Hangman game as Undertaker."},
+    "HANGMAN_DOWN_TO_WIRE": {"name": "💀 Down to the Wire", "description": "Win Hangman with 5 of 6 mistakes."},
 }
