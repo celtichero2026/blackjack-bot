@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from achievements import ACHIEVEMENTS
-from database import award_achievement, get_profile, get_math_stats
+from database import award_achievement, get_profile, get_math_stats, get_hangman_stats
 
 
 def check_achievements(user_id: int):
@@ -40,7 +40,23 @@ def check_achievements(user_id: int):
         math_best_streak,
         math_fastest_answer_ms,
         math_last_daily_challenge,
+        math_total_answer_time_ms,
+        math_timed_answer_count,
+        math_total_match_time_ms,
+        math_completed_match_count,
     ) = math_stats
+
+    hangman_stats = get_hangman_stats(user_id)
+
+    (
+        hangman_games_played,
+        hangman_guesser_games,
+        hangman_undertaker_games,
+        hangman_guesser_wins,
+        hangman_undertaker_wins,
+        hangman_letters_guessed,
+        hangman_down_to_wire_wins,
+    ) = hangman_stats
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -113,5 +129,20 @@ def check_achievements(user_id: int):
 
     if math_fastest_answer_ms > 0 and math_fastest_answer_ms <= 3000:
         try_award("MATH_QUICK_MATHS")
+
+    if hangman_games_played >= 1:
+        try_award("HANGMAN_FIRST_GRAVE")
+
+    if hangman_letters_guessed >= 25:
+        try_award("HANGMAN_LETTER_GREMLIN")
+
+    if hangman_guesser_wins >= 1:
+        try_award("HANGMAN_NOT_TODAY")
+
+    if hangman_undertaker_wins >= 1:
+        try_award("HANGMAN_UNDERTAKERS_DUE")
+
+    if hangman_down_to_wire_wins >= 1:
+        try_award("HANGMAN_DOWN_TO_WIRE")
 
     return earned
