@@ -3,7 +3,7 @@ import random
 import asyncio
 import os
 import time
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 from datetime import datetime, timezone
 from typing import Optional
@@ -50,6 +50,16 @@ from database import (
     record_math_drill_result,
     get_math_stats,
     get_last_daily_math_challenge,
+    get_daily_claim_preview,
+    claim_daily_streak,
+    get_daily_tasks,
+    mark_daily_task,
+    claim_daily_task_reward_if_ready,
+    record_hangman_result,
+    get_hangman_stats,
+    get_hourly_tip_total,
+    add_hourly_tip_total,
+    get_all_player_ids,
     add_player_effect,
     get_player_effect_quantity,
     consume_player_effect,
@@ -147,6 +157,20 @@ MATH_DRILL_DIFFICULTIES = {
 }
 
 DAILY_MATH_CHALLENGE_GOLD = 100
+
+DAILY_TASK_REWARD_GOLD = 100
+DAILY_TASK_REWARD_XP = 25
+TIP_HOURLY_LIMIT = 100
+TAVERN_EVENT_CHANCE = 0.40
+TAVERN_EVENT_INTERVAL_HOURS = 1
+
+DAILY_TASK_LABELS = {
+    "play_game": "🎮 Play 1 game",
+    "take_shot": "🥃 Take 1 shot",
+    "use_mischief": "🎭 Use 1 mischief item",
+    "open_pack": "📦 Open 1 sticker pack",
+    "complete_math": "🧠 Complete 1 math drill",
+}
 
 
 CONFETTI_DUD_GIF = os.getenv("CONFETTI_DUD_GIF", "").strip()
@@ -838,6 +862,109 @@ def award_tavern_xp(user_id, amount, source):
 
     return xp_info
 
+
+
+def utc_today_text():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def current_hour_key():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d-%H")
+
+
+def apply_daily_task_progress(user_id, task_key):
+    today = utc_today_text()
+    tasks_snapshot = mark_daily_task(user_id, today, task_key)
+    reward_awarded = claim_daily_task_reward_if_ready(user_id, today)
+    xp_info = None
+
+    if reward_awarded:
+        add_gold(user_id, DAILY_TASK_REWARD_GOLD)
+        xp_info = award_tavern_xp(user_id, DAILY_TASK_REWARD_XP, "tasks")
+
+    return tasks_snapshot, reward_awarded, xp_info
+
+
+def daily_task_reward_text(reward_awarded, xp_info=None):
+    if not reward_awarded:
+        return ""
+
+    text = (
+        f"\n\n✅ **Daily Tavern Tasks complete!** "
+        f"+{DAILY_TASK_REWARD_GOLD:,} gold and +{DAILY_TASK_REWARD_XP} XP awarded."
+    )
+
+    if xp_info and xp_info.get("title_xp_bonus", 0) > 0:
+        text += f"\n🎖 Title Bonus: +{xp_info['title_xp_bonus']} XP"
+
+    return text
+
+
+def format_daily_tasks_lines(user_id):
+    tasks_snapshot = get_daily_tasks(user_id, utc_today_text())
+    lines = []
+
+    for task_key, label in DAILY_TASK_LABELS.items():
+        marker = "✅" if tasks_snapshot.get(task_key) else "⬜"
+        lines.append(f"{marker} {label}")
+
+    reward_marker = "✅ Claimed" if tasks_snapshot.get("reward_claimed") else "🎁 Available after all tasks"
+    lines.append("")
+    lines.append(f"Reward: **{DAILY_TASK_REWARD_GOLD:,} gold + {DAILY_TASK_REWARD_XP} XP** — {reward_marker}")
+    return "\n".join(lines)
+
+
+def build_daily_tasks_embed(user_id):
+    embed = discord.Embed(
+        title="✅ Daily Tavern Tasks",
+        description=format_daily_tasks_lines(user_id),
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text="Tasks reset each UTC day.")
+    return embed
+
+
+def award_bonus_sticker_pack(user_id, pack_id="welcome_pack"):
+    pack = STICKER_PACKS.get(pack_id)
+
+    if not pack:
+        return []
+
+    pulls = []
+    date_collected = datetime.now(timezone.utc).isoformat()
+
+    for index in range(pack.get("pulls", 3)):
+        sticker_id = roll_sticker_from_pack(pack_id)
+
+        if not sticker_id:
+            continue
+
+        old_quantity = get_player_sticker_quantity(user_id, sticker_id)
+        add_player_sticker(user_id, sticker_id, 1, date_collected)
+        pulls.append((sticker_id, old_quantity, old_quantity + 1))
+
+    return pulls
+
+
+def format_bonus_pack_lines(pulls):
+    if not pulls:
+        return ""
+
+    lines = []
+    for sticker_id, old_quantity, new_quantity in pulls:
+        sticker = STICKERS.get(sticker_id, {"name": sticker_id})
+        status = "NEW!" if old_quantity == 0 else f"x{new_quantity}"
+        lines.append(f"{get_sticker_rarity_label(sticker_id)} {sticker['name']} — **{status}**")
+
+    return "\n".join(lines)
+
+
+def get_common_sticker_ids():
+    return [
+        sticker_id
+        for sticker_id, sticker in STICKERS.items()
+        if sticker.get("rarity") == "common"
+    ]
 
 def parse_title_changed_at(value):
     if not value:
@@ -1747,8 +1874,12 @@ async def buy_and_pour_tavern_shot(interaction, allowed_user_ids=None):
 
     add_gold(interaction.user.id, -price)
     new_balance = get_balance(interaction.user.id)
+    tasks_snapshot, task_rewarded, task_xp_info = apply_daily_task_progress(interaction.user.id, "take_shot")
+    task_reward_text = daily_task_reward_text(task_rewarded, task_xp_info)
 
-    if item_confirmations_enabled():
+    if task_reward_text:
+        await interaction.followup.send(task_reward_text.strip(), ephemeral=True)
+    elif item_confirmations_enabled():
         await interaction.followup.send(
             f"🥃 Shot poured for **{price:,} gold**: {public_message.jump_url}\n"
             f"💰 New balance: **{new_balance:,} gold**.",
@@ -2214,6 +2345,12 @@ class BlackjackGameView(discord.ui.View):
                     record_game_stat(player_id, "push")
                     xp_info = self.award_xp(player_id, 5)
                     result += xp_result_text(xp_info)
+
+                tasks_snapshot, task_rewarded, task_xp_info = apply_daily_task_progress(player_id, "play_game")
+                if task_rewarded:
+                    if task_xp_info and task_xp_info.get("level_up"):
+                        self.level_ups.append((player_id, task_xp_info))
+                    result += daily_task_reward_text(task_rewarded, task_xp_info)
 
                 if player_id not in achievement_checked:
                     result = add_achievement_text(player_id, result)
@@ -2862,6 +2999,12 @@ class DiceGameView(discord.ui.View):
 
                     result += xp_result_text(xp_info)
 
+                tasks_snapshot, task_rewarded, task_xp_info = apply_daily_task_progress(player_id, "play_game")
+                if task_rewarded:
+                    if task_xp_info and task_xp_info.get("level_up"):
+                        self.level_ups.append((player_id, task_xp_info))
+                    result += daily_task_reward_text(task_rewarded, task_xp_info)
+
                 result = add_achievement_text(player_id, result)
                 description += f"<@{player_id}>: **{result}**\n"
 
@@ -2970,15 +3113,19 @@ class MathDrillGameView(discord.ui.View):
         self.current_streak = 0
         self.best_streak = 0
         self.fastest_answer_ms = 0
+        self.total_answer_time_ms = 0
+        self.timed_answer_count = 0
         self.question = ""
         self.answer = 0
         self.choices = []
         self.question_started_at = 0
+        self.drill_started_at = time.monotonic()
         self.message = None
         self.timer_task = None
         self.finished = False
         self.lock_note = ""
         self.level_ups = []
+        self.daily_task_text = ""
         self.next_question()
 
     def next_question(self):
@@ -3051,6 +3198,8 @@ class MathDrillGameView(discord.ui.View):
         elif self.is_daily:
             gold_text = f"\n💰 Daily challenge reward requires a perfect **5/5**."
 
+        task_text = self.daily_task_text
+
         achievement_text = ""
         if new_achievements:
             achievement_text = (
@@ -3062,6 +3211,12 @@ class MathDrillGameView(discord.ui.View):
         if self.fastest_answer_ms > 0:
             fastest_text = f"{self.fastest_answer_ms / 1000:.2f}s"
 
+        average_text = "None yet"
+        if self.timed_answer_count > 0:
+            average_text = f"{(self.total_answer_time_ms / self.timed_answer_count) / 1000:.2f}s"
+
+        match_time_text = f"{(time.monotonic() - self.drill_started_at):.1f}s"
+
         embed = discord.Embed(
             title=title,
             description=(
@@ -3070,9 +3225,12 @@ class MathDrillGameView(discord.ui.View):
                 f"Difficulty: **{difficulty_name}**\n"
                 f"Score: **{self.correct_count}/{MATH_DRILL_TOTAL_QUESTIONS}**\n"
                 f"Best Streak: **{self.best_streak}**\n"
-                f"Fastest Correct Answer: **{fastest_text}**"
+                f"Fastest Correct Answer: **{fastest_text}**\n"
+                f"Average Answer Time: **{average_text}**\n"
+                f"Drill Time: **{match_time_text}**"
                 f"{xp_text}"
                 f"{gold_text}"
+                f"{task_text}"
                 f"{achievement_text}"
             ),
             color=discord.Color.gold() if perfect else discord.Color.blurple()
@@ -3135,6 +3293,8 @@ class MathDrillGameView(discord.ui.View):
             self.timer_task.cancel()
 
         elapsed_ms = int((time.monotonic() - self.question_started_at) * 1000)
+        self.total_answer_time_ms += elapsed_ms
+        self.timed_answer_count += 1
         was_correct = selected_value == self.answer
 
         if was_correct:
@@ -3218,9 +3378,21 @@ class MathDrillGameView(discord.ui.View):
             self.best_streak,
             self.fastest_answer_ms,
             self.is_daily,
+            self.total_answer_time_ms,
+            self.timed_answer_count,
+            int((time.monotonic() - self.drill_started_at) * 1000),
             self.challenge_date,
         )
 
+        task_text = ""
+        for task_key in ["play_game", "complete_math"]:
+            tasks_snapshot, task_rewarded, task_xp_info = apply_daily_task_progress(self.player_id, task_key)
+            if task_rewarded:
+                if task_xp_info and task_xp_info.get("level_up"):
+                    self.level_ups.append((self.player_id, task_xp_info))
+                task_text += daily_task_reward_text(task_rewarded, task_xp_info)
+
+        self.daily_task_text = task_text
         new_achievements = check_achievements(self.player_id)
         return xp_info, gold_reward, new_achievements
 
@@ -4025,6 +4197,7 @@ class HangmanGameView(discord.ui.View):
         self.page = "vowels"
         self.finished = False
         self.level_ups = []
+        self.letter_guess_counts = {player_id: 0 for player_id in self.guessers}
         self.message = None
         self.refresh_letter_buttons()
 
@@ -4110,6 +4283,23 @@ class HangmanGameView(discord.ui.View):
 
         return xp_info
 
+    def finish_bonus_text_for_player(self, player_id, task_keys=None):
+        text = ""
+        task_keys = task_keys or ["play_game"]
+
+        for task_key in task_keys:
+            tasks_snapshot, task_rewarded, task_xp_info = apply_daily_task_progress(player_id, task_key)
+            if task_rewarded:
+                if task_xp_info and task_xp_info.get("level_up"):
+                    self.level_ups.append((player_id, task_xp_info))
+                text += daily_task_reward_text(task_rewarded, task_xp_info)
+
+        new_achievements = check_achievements(player_id)
+        if new_achievements:
+            text += "\n🏆 Achievement Unlocked:\n" + "\n".join(new_achievements)
+
+        return text
+
     def finish_results_text(self, guessers_win):
         self.finished = True
         HANGMAN_ACTIVE_CHANNELS.pop(self.channel_id, None)
@@ -4139,11 +4329,20 @@ class HangmanGameView(discord.ui.View):
             lines.append(f"🎉 **Guessers win!** The word was **{self.word.upper()}**.")
             lines.append(f"Each guesser earns **{HANGMAN_GUESSER_WIN_GOLD:,} gold** and **{HANGMAN_GUESSER_WIN_XP} XP**.")
 
+            down_to_wire = self.mistakes == 5
             for player_id in self.guessers:
                 add_gold(player_id, HANGMAN_GUESSER_WIN_GOLD)
                 self.award_xp(player_id, HANGMAN_GUESSER_WIN_XP)
+                record_hangman_result(
+                    player_id,
+                    "guesser",
+                    True,
+                    self.letter_guess_counts.get(player_id, 0),
+                    down_to_wire,
+                )
 
             self.award_xp(self.undertaker_id, HANGMAN_UNDERTAKER_LOSE_XP)
+            record_hangman_result(self.undertaker_id, "undertaker", False, 0, False)
             lines.append(f"The Undertaker earns **{HANGMAN_UNDERTAKER_LOSE_XP} XP** for hosting the word.")
         else:
             lines.append(f"💀 **Undertaker wins!** The word was **{self.word.upper()}**.")
@@ -4192,6 +4391,7 @@ class HangmanGameView(discord.ui.View):
             return
 
         self.guessed_letters.add(letter)
+        self.letter_guess_counts[interaction.user.id] = self.letter_guess_counts.get(interaction.user.id, 0) + 1
 
         result_text = ""
         if letter in self.word:
@@ -4234,9 +4434,21 @@ class TavernView(discord.ui.View):
 
     @discord.ui.button(label="Claim Daily", emoji="🍺", style=discord.ButtonStyle.green)
     async def daily_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        daily_reward, title_bonus, title_name = get_daily_gold_reward(interaction.user.id, DAILY_REWARD)
-        claimed, balance = claim_daily(interaction.user.id, daily_reward, today)
+        today = utc_today_text()
+        preview = get_daily_claim_preview(interaction.user.id, today)
+
+        if not preview["can_claim"]:
+            await interaction.response.send_message(
+                f"🍺 You already claimed your daily gold today.\n"
+                f"🔥 Current streak: **{preview['streak']} day(s)**\n"
+                f"💰 Balance: **{preview['balance']:,} gold**.",
+                ephemeral=True
+            )
+            return
+
+        base_reward = preview["base_reward"]
+        daily_reward, title_bonus, title_name = get_daily_gold_reward(interaction.user.id, base_reward)
+        claimed, balance, streak = claim_daily_streak(interaction.user.id, daily_reward, today, preview["streak"])
 
         if not claimed:
             await interaction.response.send_message(
@@ -4249,8 +4461,24 @@ class TavernView(discord.ui.View):
         if title_bonus > 0:
             bonus_line = f"\n🎖 {title_name} bonus: **+{title_bonus:,} gold**"
 
+        pack_line = ""
+        if preview["bonus_pack"]:
+            pulls = award_bonus_sticker_pack(interaction.user.id, "welcome_pack")
+            pack_lines = format_bonus_pack_lines(pulls)
+            if pack_lines:
+                pack_line = (
+                    "\n\n📦 **7-Day Streak Bonus: Welcome Pack opened!**\n"
+                    f"{pack_lines}"
+                )
+            else:
+                pack_line = "\n\n📦 **7-Day Streak Bonus earned!** No rollable stickers were available."
+
         await interaction.response.send_message(
-            f"🍺 You claimed **{daily_reward:,} gold** from The Tavern.{bonus_line}\n💰 New balance: **{balance:,} gold**.",
+            f"🍺 You claimed **{daily_reward:,} gold** from The Tavern.\n"
+            f"🔥 Daily streak: **Day {streak}**"
+            f"{bonus_line}\n"
+            f"💰 New balance: **{balance:,} gold**."
+            f"{pack_line}",
             ephemeral=True
         )
 
@@ -4269,6 +4497,13 @@ class TavernView(discord.ui.View):
             message,
             ephemeral=True
         )
+    @discord.ui.button(label="Daily Tasks", emoji="✅", style=discord.ButtonStyle.green)
+    async def daily_tasks_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            embed=build_daily_tasks_embed(interaction.user.id),
+            ephemeral=True
+        )
+
     @discord.ui.button(label="Shop", emoji="🏪", style=discord.ButtonStyle.gray)
     async def shop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
@@ -4366,14 +4601,21 @@ class TavernView(discord.ui.View):
         description = ""
 
         for index, row in enumerate(rows, start=1):
-            user_id, balance, wins, losses, games_played = row
-            description += f"**{index}.** <@{user_id}> — **{balance:,} gold**\n"
+            user_id, xp, balance, games_played = row
+            level, xp_current, xp_needed = get_level_info(xp or 0)
+            description += (
+                f"**{index}.** <@{user_id}> — "
+                f"⭐ **Level {level}** • **{(xp or 0):,} XP** "
+                f"• {games_played or 0:,} games\n"
+            )
 
         embed = discord.Embed(
-            title="🏆 The Tavern Leaderboard",
+            title="🏆 Tavern XP Leaderboard",
             description=description,
             color=discord.Color.gold()
         )
+
+        embed.set_footer(text="Ranked by total XP, then games played, then gold.")
 
         await interaction.response.send_message(
             embed=embed,
@@ -4428,6 +4670,7 @@ def build_profile_embed(target_user):
 
     tomatoes_thrown, tomatoes_taken, pies_thrown, pies_taken = get_mischief_stats(target_user.id)
     math_stats = get_math_stats(target_user.id)
+    hangman_stats = get_hangman_stats(target_user.id)
 
     (
         math_games_played,
@@ -4440,11 +4683,33 @@ def build_profile_embed(target_user):
         math_best_streak,
         math_fastest_answer_ms,
         math_last_daily_challenge,
+        math_total_answer_time_ms,
+        math_timed_answer_count,
+        math_total_match_time_ms,
+        math_completed_match_count,
     ) = math_stats
 
     fastest_math = "None yet"
     if math_fastest_answer_ms > 0:
         fastest_math = f"{math_fastest_answer_ms / 1000:.2f}s"
+
+    average_math = "None yet"
+    if math_timed_answer_count > 0:
+        average_math = f"{(math_total_answer_time_ms / math_timed_answer_count) / 1000:.2f}s"
+
+    average_match = "None yet"
+    if math_completed_match_count > 0:
+        average_match = f"{(math_total_match_time_ms / math_completed_match_count) / 1000:.1f}s"
+
+    (
+        hangman_games_played,
+        hangman_guesser_games,
+        hangman_undertaker_games,
+        hangman_guesser_wins,
+        hangman_undertaker_wins,
+        hangman_letters_guessed,
+        hangman_down_to_wire_wins,
+    ) = hangman_stats
 
     embed = discord.Embed(
         title=f"👤 {target_user.display_name}'s Tavern Profile",
@@ -4483,6 +4748,17 @@ def build_profile_embed(target_user):
             value=shield_text,
             inline=False
         )
+
+    embed.add_field(
+        name="🪦 Hangman",
+        value=(
+            f"Games Played: **{hangman_games_played:,}**\n"
+            f"Guesser Wins: **{hangman_guesser_wins:,}**\n"
+            f"Undertaker Wins: **{hangman_undertaker_wins:,}**\n"
+            f"Letters Guessed: **{hangman_letters_guessed:,}**"
+        ),
+        inline=False
+    )
 
     embed.add_field(
         name="🎭 Mischief",
@@ -5020,7 +5296,20 @@ def build_detailed_stats_embed(target_user):
             f"Correct Answers: **{math_correct_answers:,}**\n"
             f"Perfect Rounds: **{math_perfect_rounds:,}**\n"
             f"Best Streak: **{math_best_streak:,}**\n"
-            f"Fastest Answer: **{fastest_math}**"
+            f"Fastest Answer: **{fastest_math}**\n"
+            f"Average Answer: **{average_math}**\n"
+            f"Average Drill Time: **{average_match}**"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🪦 Hangman",
+        value=(
+            f"Games Played: **{hangman_games_played:,}**\n"
+            f"Guesser Wins: **{hangman_guesser_wins:,}**\n"
+            f"Undertaker Wins: **{hangman_undertaker_wins:,}**\n"
+            f"Letters Guessed: **{hangman_letters_guessed:,}**"
         ),
         inline=False
     )
@@ -5941,11 +6230,17 @@ class BuyStickerPackSelect(discord.ui.Select):
             new_quantity = old_quantity + 1
             pulls.append((sticker_id, old_quantity, new_quantity))
 
+        tasks_snapshot, task_rewarded, task_xp_info = apply_daily_task_progress(interaction.user.id, "open_pack")
+        task_reward_text = daily_task_reward_text(task_rewarded, task_xp_info)
+
         await interaction.response.edit_message(
             content=None,
             embed=build_sticker_pack_result_embed(interaction.user.id, pack_id, pulls),
             view=StickerPackResultView(interaction.user.id)
         )
+
+        if task_reward_text:
+            await interaction.followup.send(task_reward_text.strip(), ephemeral=True)
 
 
 class BuyStickerPackSelectView(discord.ui.View):
@@ -6601,10 +6896,15 @@ class UseConsumableTargetSelect(discord.ui.UserSelect):
                 )
                 return
 
+            task_reward_text = ""
             if mischief_stat_item_id:
                 record_mischief_hit(interaction.user.id, target.id, mischief_stat_item_id)
+                tasks_snapshot, task_rewarded, task_xp_info = apply_daily_task_progress(interaction.user.id, "use_mischief")
+                task_reward_text = daily_task_reward_text(task_rewarded, task_xp_info)
 
-            if item_confirmations_enabled():
+            if task_reward_text:
+                await interaction.followup.send(task_reward_text.strip(), ephemeral=True)
+            elif item_confirmations_enabled():
                 await interaction.followup.send(
                     f"🎭 Mischief deployed: {public_message.jump_url}",
                     ephemeral=True
@@ -7077,6 +7377,173 @@ class Tavern(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def cog_load(self):
+        if not self.tavern_event_loop.is_running():
+            self.tavern_event_loop.start()
+
+    async def cog_unload(self):
+        if self.tavern_event_loop.is_running():
+            self.tavern_event_loop.cancel()
+
+    @tasks.loop(hours=1)
+    async def tavern_event_loop(self):
+        await self.bot.wait_until_ready()
+
+        if random.random() > TAVERN_EVENT_CHANCE:
+            return
+
+        channel = self.bot.get_channel(TAVERN_CHANNEL_ID)
+        if channel is None:
+            return
+
+        player_ids = get_all_player_ids()
+        if not player_ids:
+            return
+
+        player_id = random.choice(player_ids)
+
+        try:
+            player_id_int = int(player_id)
+        except ValueError:
+            return
+
+        outcome = random.choice([
+            "found_gold",
+            "lost_gold",
+            "xp",
+            "tomato",
+            "common_sticker",
+        ])
+
+        title = "🍻 Tavern Event"
+        description = f"<@{player_id_int}> "
+
+        if outcome == "found_gold":
+            add_gold(player_id_int, 50)
+            description += "found **50 gold** under the bar. Nobody ask why it was sticky."
+
+        elif outcome == "lost_gold":
+            balance = get_balance(player_id_int)
+            loss = min(25, balance)
+            if loss > 0:
+                add_gold(player_id_int, -loss)
+                description += f"lost **{loss} gold** buying mystery peanuts. Worth it? Unknown."
+            else:
+                description += "tried to buy mystery peanuts, but was too broke to suffer financially."
+
+        elif outcome == "xp":
+            award_tavern_xp(player_id_int, 10, "event")
+            description += "gained **10 XP** from questionable Tavern wisdom."
+
+        elif outcome == "tomato":
+            description += "got splashed by a rogue tomato. No one has claimed responsibility."
+
+        else:
+            common_stickers = get_common_sticker_ids()
+            if common_stickers:
+                sticker_id = random.choice(common_stickers)
+                sticker = STICKERS.get(sticker_id, {"name": sticker_id})
+                old_quantity = get_player_sticker_quantity(player_id_int, sticker_id)
+                add_player_sticker(
+                    player_id_int,
+                    sticker_id,
+                    1,
+                    datetime.now(timezone.utc).isoformat()
+                )
+                status = "NEW!" if old_quantity == 0 else f"x{old_quantity + 1}"
+                description += f"found a common sticker: **{sticker['name']}** — **{status}**."
+            else:
+                description += "almost found a sticker, but the sticker drawer was empty."
+
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=discord.Color.gold()
+        )
+        embed.set_footer(text="Random Tavern Events roll once per hour with a 40% chance.")
+
+        await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False))
+
+    @tavern_event_loop.before_loop
+    async def before_tavern_event_loop(self):
+        await self.bot.wait_until_ready()
+
+    @app_commands.command(name="tasks", description="View your Daily Tavern Tasks")
+    async def tasks(self, interaction: discord.Interaction):
+        if not is_tavern_or_shop_channel(interaction):
+            await interaction.response.send_message(
+                "✅ Use `/tasks` in The Tavern or the Tavern shop channel.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            embed=build_daily_tasks_embed(interaction.user.id),
+            ephemeral=True
+        )
+
+    @app_commands.command(name="tip", description="Tip another Tavern player gold")
+    @app_commands.describe(user="Player to tip", amount="Gold amount, up to 100 per hour")
+    async def tip(self, interaction: discord.Interaction, user: discord.User, amount: int):
+        if not is_tavern_or_shop_channel(interaction):
+            await interaction.response.send_message(
+                "💸 Use `/tip` in The Tavern or the Tavern shop channel.",
+                ephemeral=True
+            )
+            return
+
+        if user.bot:
+            await interaction.response.send_message(
+                "💸 You cannot tip bots. The Tavern Bot refuses your hush money.",
+                ephemeral=True
+            )
+            return
+
+        if user.id == interaction.user.id:
+            await interaction.response.send_message(
+                "💸 You cannot tip yourself. That is just moving coins between pockets.",
+                ephemeral=True
+            )
+            return
+
+        if amount <= 0:
+            await interaction.response.send_message(
+                "💸 Tip amount must be greater than 0.",
+                ephemeral=True
+            )
+            return
+
+        hour_key = current_hour_key()
+        tipped_this_hour = get_hourly_tip_total(interaction.user.id, hour_key)
+        remaining = max(0, TIP_HOURLY_LIMIT - tipped_this_hour)
+
+        if amount > remaining:
+            await interaction.response.send_message(
+                f"💸 You can only tip **{TIP_HOURLY_LIMIT} gold per hour**.\n"
+                f"Remaining this hour: **{remaining} gold**.",
+                ephemeral=True
+            )
+            return
+
+        balance = get_balance(interaction.user.id)
+
+        if balance < amount:
+            await interaction.response.send_message(
+                f"💸 You only have **{balance:,} gold**.",
+                ephemeral=True
+            )
+            return
+
+        add_gold(interaction.user.id, -amount)
+        new_recipient_balance = add_gold(user.id, amount)
+        add_hourly_tip_total(interaction.user.id, hour_key, amount)
+
+        await interaction.response.send_message(
+            f"💸 {interaction.user.mention} tipped {user.mention} **{amount:,} gold**.\n"
+            f"{user.mention}'s new balance: **{new_recipient_balance:,} gold**.",
+            allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
+        )
+
     @app_commands.command(name="addgold", description="Founder only - add gold to a player")
     @app_commands.describe(user="Player", amount="Amount of gold to add")
     async def addgold(self, interaction: discord.Interaction, user: discord.User, amount: int):
@@ -7231,6 +7698,7 @@ class Tavern(commands.Cog):
                 "Try your luck, claim your gold, and make questionable decisions.\n\n"
                 "**Available:**\n"
                 "🍺 Daily Gold\n"
+                "✅ Daily Tasks\n"
                 "💰 Balance\n"
                 "👤 Profile\n"
                 "🏪 Shop\n"
