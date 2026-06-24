@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 DB_NAME = "data/casino.db"
 
@@ -110,6 +111,7 @@ def setup_database():
         "pies_taken": "INTEGER DEFAULT 0",
         "featured_sticker_id": "TEXT DEFAULT ''",
         "title_changed_at": "TEXT DEFAULT ''",
+        "daily_streak": "INTEGER DEFAULT 0",
     }
 
     for column, definition in extra_columns.items():
@@ -193,6 +195,56 @@ def setup_database():
         )
     """)
 
+    # Add newer math timing columns if this database already existed.
+    for column, definition in {
+        "total_answer_time_ms": "INTEGER DEFAULT 0",
+        "timed_answer_count": "INTEGER DEFAULT 0",
+        "total_match_time_ms": "INTEGER DEFAULT 0",
+        "completed_match_count": "INTEGER DEFAULT 0",
+    }.items():
+        try:
+            cur.execute(
+                f"ALTER TABLE player_math_stats ADD COLUMN {column} {definition}"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS player_hangman_stats (
+            user_id TEXT PRIMARY KEY,
+            games_played INTEGER DEFAULT 0,
+            guesser_games INTEGER DEFAULT 0,
+            undertaker_games INTEGER DEFAULT 0,
+            guesser_wins INTEGER DEFAULT 0,
+            undertaker_wins INTEGER DEFAULT 0,
+            letters_guessed INTEGER DEFAULT 0,
+            down_to_wire_wins INTEGER DEFAULT 0
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS player_daily_tasks (
+            user_id TEXT,
+            task_date TEXT,
+            play_game INTEGER DEFAULT 0,
+            take_shot INTEGER DEFAULT 0,
+            use_mischief INTEGER DEFAULT 0,
+            open_pack INTEGER DEFAULT 0,
+            complete_math INTEGER DEFAULT 0,
+            reward_claimed INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, task_date)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS player_tip_limits (
+            user_id TEXT,
+            hour_key TEXT,
+            total_tipped INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, hour_key)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -255,9 +307,9 @@ def get_leaderboard(limit: int = 10):
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT user_id, balance, wins, losses, games_played
+        SELECT user_id, xp, balance, games_played
         FROM players
-        ORDER BY balance DESC
+        ORDER BY xp DESC, games_played DESC, balance DESC
         LIMIT ?
     """, (limit,))
 
@@ -1230,7 +1282,11 @@ def get_math_stats(user_id: int):
             hard_perfect_rounds,
             best_streak,
             fastest_answer_ms,
-            last_daily_challenge
+            last_daily_challenge,
+            total_answer_time_ms,
+            timed_answer_count,
+            total_match_time_ms,
+            completed_match_count
         FROM player_math_stats
         WHERE user_id = ?
         """,
@@ -1262,6 +1318,9 @@ def record_math_drill_result(
     best_streak: int,
     fastest_answer_ms: int,
     is_daily: bool,
+    total_answer_time_ms: int = 0,
+    timed_answer_count: int = 0,
+    match_duration_ms: int = 0,
     challenge_date: str = ""
 ):
     conn = connect()
@@ -1281,6 +1340,10 @@ def record_math_drill_result(
     daily_count = 1 if is_daily else 0
     daily_date_value = challenge_date if is_daily else None
     fastest_value = int(fastest_answer_ms or 0)
+    total_answer_time_value = int(total_answer_time_ms or 0)
+    timed_answer_count_value = int(timed_answer_count or 0)
+    match_duration_value = int(match_duration_ms or 0)
+    match_count_value = 1 if match_duration_value > 0 else 0
 
     cur.execute(
         """
@@ -1301,7 +1364,11 @@ def record_math_drill_result(
             last_daily_challenge = CASE
                 WHEN ? IS NOT NULL AND ? != '' THEN ?
                 ELSE last_daily_challenge
-            END
+            END,
+            total_answer_time_ms = total_answer_time_ms + ?,
+            timed_answer_count = timed_answer_count + ?,
+            total_match_time_ms = total_match_time_ms + ?,
+            completed_match_count = completed_match_count + ?
         WHERE user_id = ?
         """,
         (
@@ -1318,9 +1385,344 @@ def record_math_drill_result(
             daily_date_value,
             daily_date_value,
             daily_date_value,
+            total_answer_time_value,
+            timed_answer_count_value,
+            match_duration_value,
+            match_count_value,
             str(user_id),
         )
     )
 
     conn.commit()
     conn.close()
+
+
+# ---------- Daily claim streaks ----------
+
+def _parse_day(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _daily_streak_reward_for_day(streak: int):
+    if streak <= 1:
+        return 250
+    if streak == 2:
+        return 275
+    return 300
+
+
+def get_daily_claim_preview(user_id: int, today: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("INSERT OR IGNORE INTO players (user_id) VALUES (?)", (str(user_id),))
+    cur.execute(
+        "SELECT balance, last_daily, daily_streak FROM players WHERE user_id = ?",
+        (str(user_id),)
+    )
+    balance, last_daily, current_streak = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    if last_daily == today:
+        return {
+            "can_claim": False,
+            "balance": balance,
+            "streak": current_streak or 0,
+            "base_reward": 0,
+            "bonus_pack": False,
+        }
+
+    today_date = _parse_day(today)
+    last_date = _parse_day(last_daily)
+
+    if today_date and last_date and last_date == today_date - timedelta(days=1):
+        next_streak = int(current_streak or 0) + 1
+    else:
+        next_streak = 1
+
+    return {
+        "can_claim": True,
+        "balance": balance,
+        "streak": next_streak,
+        "base_reward": _daily_streak_reward_for_day(next_streak),
+        "bonus_pack": next_streak > 0 and next_streak % 7 == 0,
+    }
+
+
+def claim_daily_streak(user_id: int, reward: int, today: str, streak: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("INSERT OR IGNORE INTO players (user_id) VALUES (?)", (str(user_id),))
+    cur.execute(
+        "SELECT balance, last_daily, daily_streak FROM players WHERE user_id = ?",
+        (str(user_id),)
+    )
+    balance, last_daily, current_streak = cur.fetchone()
+
+    if last_daily == today:
+        conn.close()
+        return False, balance, current_streak or 0
+
+    new_balance = balance + reward
+    cur.execute(
+        "UPDATE players SET balance = ?, last_daily = ?, daily_streak = ? WHERE user_id = ?",
+        (new_balance, today, streak, str(user_id))
+    )
+
+    conn.commit()
+    conn.close()
+    return True, new_balance, streak
+
+
+# ---------- Daily Tavern Tasks ----------
+
+DAILY_TASK_KEYS = ["play_game", "take_shot", "use_mischief", "open_pack", "complete_math"]
+
+
+def get_daily_tasks(user_id: int, task_date: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_daily_tasks (user_id, task_date)
+        VALUES (?, ?)
+        """,
+        (str(user_id), task_date)
+    )
+
+    cur.execute(
+        """
+        SELECT play_game, take_shot, use_mischief, open_pack, complete_math, reward_claimed
+        FROM player_daily_tasks
+        WHERE user_id = ? AND task_date = ?
+        """,
+        (str(user_id), task_date)
+    )
+    row = cur.fetchone()
+
+    conn.commit()
+    conn.close()
+
+    if not row:
+        row = (0, 0, 0, 0, 0, 0)
+
+    return {
+        "play_game": bool(row[0]),
+        "take_shot": bool(row[1]),
+        "use_mischief": bool(row[2]),
+        "open_pack": bool(row[3]),
+        "complete_math": bool(row[4]),
+        "reward_claimed": bool(row[5]),
+    }
+
+
+def mark_daily_task(user_id: int, task_date: str, task_key: str):
+    if task_key not in DAILY_TASK_KEYS:
+        return get_daily_tasks(user_id, task_date)
+
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_daily_tasks (user_id, task_date)
+        VALUES (?, ?)
+        """,
+        (str(user_id), task_date)
+    )
+
+    cur.execute(
+        f"""
+        UPDATE player_daily_tasks
+        SET {task_key} = 1
+        WHERE user_id = ? AND task_date = ?
+        """,
+        (str(user_id), task_date)
+    )
+
+    conn.commit()
+    conn.close()
+    return get_daily_tasks(user_id, task_date)
+
+
+def claim_daily_task_reward_if_ready(user_id: int, task_date: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_daily_tasks (user_id, task_date)
+        VALUES (?, ?)
+        """,
+        (str(user_id), task_date)
+    )
+
+    cur.execute(
+        """
+        SELECT play_game, take_shot, use_mischief, open_pack, complete_math, reward_claimed
+        FROM player_daily_tasks
+        WHERE user_id = ? AND task_date = ?
+        """,
+        (str(user_id), task_date)
+    )
+    row = cur.fetchone()
+
+    if not row:
+        conn.close()
+        return False
+
+    all_done = all(bool(value) for value in row[:5])
+    reward_claimed = bool(row[5])
+
+    if not all_done or reward_claimed:
+        conn.close()
+        return False
+
+    cur.execute(
+        """
+        UPDATE player_daily_tasks
+        SET reward_claimed = 1
+        WHERE user_id = ? AND task_date = ?
+        """,
+        (str(user_id), task_date)
+    )
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+# ---------- Hangman stats ----------
+
+def get_hangman_stats(user_id: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_hangman_stats (user_id)
+        VALUES (?)
+        """,
+        (str(user_id),)
+    )
+
+    cur.execute(
+        """
+        SELECT games_played, guesser_games, undertaker_games, guesser_wins,
+               undertaker_wins, letters_guessed, down_to_wire_wins
+        FROM player_hangman_stats
+        WHERE user_id = ?
+        """,
+        (str(user_id),)
+    )
+    row = cur.fetchone()
+
+    conn.commit()
+    conn.close()
+
+    if not row:
+        return (0, 0, 0, 0, 0, 0, 0)
+
+    return row
+
+
+def record_hangman_result(user_id: int, role: str, won: bool, letters_guessed: int = 0, down_to_wire: bool = False):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO player_hangman_stats (user_id)
+        VALUES (?)
+        """,
+        (str(user_id),)
+    )
+
+    guesser_game = 1 if role == "guesser" else 0
+    undertaker_game = 1 if role == "undertaker" else 0
+    guesser_win = 1 if role == "guesser" and won else 0
+    undertaker_win = 1 if role == "undertaker" and won else 0
+    wire_win = 1 if down_to_wire else 0
+
+    cur.execute(
+        """
+        UPDATE player_hangman_stats
+        SET games_played = games_played + 1,
+            guesser_games = guesser_games + ?,
+            undertaker_games = undertaker_games + ?,
+            guesser_wins = guesser_wins + ?,
+            undertaker_wins = undertaker_wins + ?,
+            letters_guessed = letters_guessed + ?,
+            down_to_wire_wins = down_to_wire_wins + ?
+        WHERE user_id = ?
+        """,
+        (
+            guesser_game,
+            undertaker_game,
+            guesser_win,
+            undertaker_win,
+            int(letters_guessed or 0),
+            wire_win,
+            str(user_id),
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+# ---------- Tip limits and random events ----------
+
+def get_hourly_tip_total(user_id: int, hour_key: str):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT total_tipped
+        FROM player_tip_limits
+        WHERE user_id = ? AND hour_key = ?
+        """,
+        (str(user_id), hour_key)
+    )
+    row = cur.fetchone()
+
+    conn.close()
+    return row[0] if row else 0
+
+
+def add_hourly_tip_total(user_id: int, hour_key: str, amount: int):
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO player_tip_limits (user_id, hour_key, total_tipped)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id, hour_key) DO UPDATE SET
+            total_tipped = total_tipped + excluded.total_tipped
+        """,
+        (str(user_id), hour_key, int(amount))
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_all_player_ids():
+    conn = connect()
+    cur = conn.cursor()
+
+    cur.execute("SELECT user_id FROM players")
+    rows = cur.fetchall()
+
+    conn.close()
+    return [row[0] for row in rows]
