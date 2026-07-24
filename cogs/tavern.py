@@ -400,6 +400,7 @@ STICKERS = {
         "collection": "welcome",
         "quote": "Blessed by management. Probably dangerous.",
         "file": "founders_favor.png",
+    },
 
     "mischief_tomato_target": {
         "name": "🍅 Tomato Target",
