@@ -207,7 +207,7 @@ SHOT_GIF_FILES = [
 SHOT_ITEMS = {
     "tavern_shot": {
         "name": "🥃 Tavern Shot",
-        "price": 750,
+        "price": 75,
         "description": "Instantly posts a random shot GIF in the current Tavern channel.",
     },
 }
@@ -215,28 +215,28 @@ SHOT_ITEMS = {
 MISCHIEF_ITEMS = {
     "rotten_tomato": {
         "name": "🍅 Rotten Tomato",
-        "price": 250,
+        "price": 25,
     },
     "cream_pie": {
         "name": "🥧 Cream Pie",
-        "price": 500,
+        "price": 50,
     },
     "mystery_box": {
         "name": "🎁 Mystery Box",
-        "price": 1000,
+        "price": 100,
     },
 }
 
 GAMEPLAY_ITEMS = {
     "lucky_shield": {
         "name": "🍀 Lucky Shield",
-        "price": 500,
-        "description": "Activate before playing. Your next gold loss has a 25% chance to be blocked.",
+        "price": 250,
+        "description": "Activate before playing. Your next gold loss has a 10% chance to be blocked.",
     },
     "sturdy_shield": {
         "name": "🛡️ Sturdy Shield",
-        "price": 1250,
-        "description": "Activate before playing. Your next gold loss has a 40% chance to be blocked.",
+        "price": 600,
+        "description": "Activate before playing. Your next gold loss has a 30% chance to be blocked.",
     },
     "fortune_shield": {
         "name": "💎 Fortune Shield",
@@ -250,14 +250,14 @@ SHIELD_TIERS = {
         "effect_id": "lucky_shield_active",
         "name": "🍀 Lucky Shield",
         "short_name": "Lucky Shield",
-        "chance": 0.25,
+        "chance": 0.10,
         "priority": 1,
     },
     "sturdy_shield": {
         "effect_id": "sturdy_shield_active",
         "name": "🛡️ Sturdy Shield",
         "short_name": "Sturdy Shield",
-        "chance": 0.40,
+        "chance": 0.30,
         "priority": 2,
     },
     "fortune_shield": {
