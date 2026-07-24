@@ -69,7 +69,6 @@ from achievement_service import check_achievements
 from achievements import ACHIEVEMENTS
 
 
-TROPHY_ID = 875349215876894720
 FOUNDER_ID = 502268158749573132
 SHOP_CHANNEL_ID = 1518842044020297801
 BASE_BET = 100
@@ -401,14 +400,6 @@ STICKERS = {
         "collection": "welcome",
         "quote": "Blessed by management. Probably dangerous.",
         "file": "founders_favor.png",
-    },
-    "welcome_trophys_fault": {
-        "name": "🎰 Trophy's Fault",
-        "rarity": "legendary",
-        "collection": "welcome",
-        "quote": "This entire establishment is technically his fault.",
-        "file": "trophys_fault.png",
-    },
 
     "mischief_tomato_target": {
         "name": "🍅 Tomato Target",
@@ -548,7 +539,6 @@ STICKER_COLLECTIONS = {
             "welcome_warm_seat",
             "welcome_tavern_regular",
             "welcome_founders_favor",
-            "welcome_trophys_fault",
         ],
     },
     "mischief": {
@@ -2535,11 +2525,6 @@ class BlackjackTableView(discord.ui.View):
             [format_table_player(player_id) for player_id in self.players]
         )
 
-        if TROPHY_ID in self.players:
-            player_list += (
-                "\n\n🎰 **THE INSPIRATION OF THE TAVERN HAS ARRIVED** 🎰\n"
-                "This entire establishment is technically his fault."
-            )
 
         if FOUNDER_ID in self.players:
             player_list += (
@@ -2661,11 +2646,6 @@ class DiceTableView(discord.ui.View):
         if self.bot_added:
             player_list += "\n- 🤖 Tavern Bot"
 
-        if TROPHY_ID in self.players:
-            player_list += (
-                "\n\n🎰 **THE INSPIRATION OF THE TAVERN HAS ARRIVED** 🎰\n"
-                "This entire establishment is technically his fault."
-            )
 
         if FOUNDER_ID in self.players:
             player_list += (
